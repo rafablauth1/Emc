@@ -29,11 +29,16 @@ def _seed_burst() -> None:
         NIT_SEGEL_044_NAME,
         "§9.3 — circuito de tensão 4 kV (aux. >40V: 2kV; aux. <40V: 1kV — ajustar manualmente)",
         {
-            "voltage": 4000,
-            "frequency_hz": 5000,
-            "coupling": "COM",
-            "polarities": ["+", "-"],
-            "duration_s": 60,
+            "points": [
+                {
+                    "voltage": 4000,
+                    "frequency_hz": 5000,
+                    "coupling": "COM",
+                    "polarity": polarity,
+                    "duration_s": 60,
+                }
+                for polarity in ("+", "-")
+            ]
         },
     )
 
@@ -48,10 +53,18 @@ def _seed_surge() -> None:
         f"{NIT_SEGEL_044_NAME} — L-N 2kV (nível 4)",
         "§9.2.3.3.a — entre linhas, 2kV, Zfonte=2Ω",
         {
-            "voltage": 2000,
-            "coupling": "L-N",
-            "polarities": ["+", "-"],
-            "phase_angles": [0, 90, 180, 270],
+            "points": [
+                {
+                    "voltage": 2000,
+                    "coupling": "L-N",
+                    "polarity": polarity,
+                    "phase_angle": angle,
+                    "pulse_count": 1,
+                    "interval_s": 60,
+                }
+                for polarity in ("+", "-")
+                for angle in (0, 90, 180, 270)
+            ]
         },
     )
     _seed_if_missing(
@@ -59,10 +72,18 @@ def _seed_surge() -> None:
         f"{NIT_SEGEL_044_NAME} — L-PE 4kV (nível 4)",
         "§9.2.3.3.c — linha e terra, 4kV, Zfonte=12Ω",
         {
-            "voltage": 4000,
-            "coupling": "L-PE",
-            "polarities": ["+", "-"],
-            "phase_angles": [0, 90, 180, 270],
+            "points": [
+                {
+                    "voltage": 4000,
+                    "coupling": "L-PE",
+                    "polarity": polarity,
+                    "phase_angle": angle,
+                    "pulse_count": 1,
+                    "interval_s": 60,
+                }
+                for polarity in ("+", "-")
+                for angle in (0, 90, 180, 270)
+            ]
         },
     )
 

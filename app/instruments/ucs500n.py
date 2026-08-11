@@ -1,6 +1,7 @@
 import time
 from typing import Callable, Optional
 
+from app.core.legacy_routines import burst_params_to_points, surge_params_to_points
 from app.instruments import ucs500n_commands as cmd
 from app.instruments.base import InstrumentDriver, TestResult
 
@@ -42,28 +43,35 @@ class UCS500NDriver(InstrumentDriver):
             on_progress(message)
 
     def _run_burst(self, params, on_progress, should_stop) -> TestResult:
-        voltage = params["voltage"]
-        frequency_hz = params.get("frequency_hz", 5000)
-        coupling = params.get("coupling", "COM")
-        polarities = params.get("polarities", ["+", "-"])
-        duration_s = params.get("duration_s", STEP_DELAY_S)
+        points = burst_params_to_points(params)
+        if not points:
+            raise ValueError("Roteiro de burst sem pontos.")
 
         self._transport.write(cmd.SELECT_BURST_MENU)
-        self._transport.write(cmd.SET_BURST_VOLTAGE.format(voltage=voltage))
-        self._transport.write(cmd.SET_BURST_FREQUENCY.format(frequency_hz=frequency_hz))
-        self._transport.write(cmd.SET_BURST_COUPLING.format(coupling=coupling))
-        self._emit(on_progress, f"Burst {voltage}V, {frequency_hz}Hz, coupling {coupling}")
+        self._emit(on_progress, f"Burst — roteiro com {len(points)} ponto(s)")
 
         applied = 0
-        for polarity in polarities:
+        for index, point in enumerate(points):
             if should_stop and should_stop():
                 self._emit(on_progress, "Ensaio interrompido pelo operador")
                 return TestResult(passed=False, applied_events=applied)
+
+            voltage = point["voltage"]
+            frequency_hz = point.get("frequency_hz", 5000)
+            coupling = point.get("coupling", "COM")
+            polarity = point.get("polarity", "+")
+            duration_s = point.get("duration_s", STEP_DELAY_S)
+
+            self._transport.write(cmd.SET_BURST_VOLTAGE.format(voltage=voltage))
+            self._transport.write(cmd.SET_BURST_FREQUENCY.format(frequency_hz=frequency_hz))
+            self._transport.write(cmd.SET_BURST_COUPLING.format(coupling=coupling))
             self._transport.write(cmd.SET_BURST_POLARITY.format(polarity=polarity))
             self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
             applied += 1
             self._emit(
-                on_progress, f"Burst aplicado — polaridade {polarity} ({duration_s:.1f}s)"
+                on_progress,
+                f"Ponto {index + 1}/{len(points)} — {voltage}V, {frequency_hz}Hz, "
+                f"{coupling}, polaridade {polarity} ({duration_s:.1f}s)",
             )
             if _interruptible_sleep(duration_s, should_stop):
                 self._transport.write(cmd.STOP_TEST)
@@ -74,37 +82,42 @@ class UCS500NDriver(InstrumentDriver):
         return TestResult(passed=True, applied_events=applied)
 
     def _run_surge(self, params, on_progress, should_stop) -> TestResult:
-        voltage = params["voltage"]
-        coupling = params.get("coupling", "L-N")
-        polarities = params.get("polarities", ["+", "-"])
-        phase_angles = params.get("phase_angles", [0, 90, 180, 270])
-        pulse_count = params.get("pulse_count", 1)
-        interval_s = params.get("interval_s", STEP_DELAY_S)
+        points = surge_params_to_points(params)
+        if not points:
+            raise ValueError("Roteiro de surge sem pontos.")
 
         self._transport.write(cmd.SELECT_SURGE_MENU)
-        self._transport.write(cmd.SET_SURGE_VOLTAGE.format(voltage=voltage))
-        self._transport.write(cmd.SET_SURGE_COUPLING.format(coupling=coupling))
-        self._emit(on_progress, f"Surge {voltage}V, coupling {coupling}")
+        self._emit(on_progress, f"Surge — roteiro com {len(points)} ponto(s)")
 
         applied = 0
-        for polarity in polarities:
-            for angle in phase_angles:
-                self._transport.write(cmd.SET_SURGE_POLARITY.format(polarity=polarity))
-                self._transport.write(cmd.SET_SURGE_PHASE_ANGLE.format(angle_deg=angle))
-                for rep in range(pulse_count):
-                    if should_stop and should_stop():
+        for index, point in enumerate(points):
+            voltage = point["voltage"]
+            coupling = point.get("coupling", "L-N")
+            polarity = point.get("polarity", "+")
+            angle = point.get("phase_angle", 0)
+            pulse_count = point.get("pulse_count", 1)
+            interval_s = point.get("interval_s", STEP_DELAY_S)
+
+            self._transport.write(cmd.SET_SURGE_VOLTAGE.format(voltage=voltage))
+            self._transport.write(cmd.SET_SURGE_COUPLING.format(coupling=coupling))
+            self._transport.write(cmd.SET_SURGE_POLARITY.format(polarity=polarity))
+            self._transport.write(cmd.SET_SURGE_PHASE_ANGLE.format(angle_deg=angle))
+
+            for rep in range(pulse_count):
+                if should_stop and should_stop():
+                    self._emit(on_progress, "Ensaio interrompido pelo operador")
+                    return TestResult(passed=False, applied_events=applied)
+                self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
+                applied += 1
+                self._emit(
+                    on_progress,
+                    f"Ponto {index + 1}/{len(points)} — {voltage}V, {coupling}, "
+                    f"{polarity}, {angle}° (pulso {rep + 1}/{pulse_count})",
+                )
+                if rep < pulse_count - 1:
+                    if _interruptible_sleep(interval_s, should_stop):
                         self._emit(on_progress, "Ensaio interrompido pelo operador")
                         return TestResult(passed=False, applied_events=applied)
-                    self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
-                    applied += 1
-                    self._emit(
-                        on_progress,
-                        f"Surge aplicado — {polarity}, {angle}° (pulso {rep + 1}/{pulse_count})",
-                    )
-                    if rep < pulse_count - 1:
-                        if _interruptible_sleep(interval_s, should_stop):
-                            self._emit(on_progress, "Ensaio interrompido pelo operador")
-                            return TestResult(passed=False, applied_events=applied)
 
         self._transport.write(cmd.STOP_TEST)
         return TestResult(passed=True, applied_events=applied)
