@@ -5,6 +5,20 @@ from app.instruments import ucs500n_commands as cmd
 from app.instruments.base import InstrumentDriver, TestResult
 
 STEP_DELAY_S = 0.3
+SLEEP_POLL_S = 0.2
+
+
+def _interruptible_sleep(duration_s: float, should_stop: Optional[Callable[[], bool]]) -> bool:
+    """Dorme por duration_s em pequenos passos, checando should_stop. Retorna True se foi
+    interrompido no meio do caminho (para o chamador poder abortar o ensaio prontamente)."""
+    elapsed = 0.0
+    while elapsed < duration_s:
+        if should_stop and should_stop():
+            return True
+        step = min(SLEEP_POLL_S, duration_s - elapsed)
+        time.sleep(step)
+        elapsed += step
+    return False
 
 
 class UCS500NDriver(InstrumentDriver):
@@ -32,6 +46,7 @@ class UCS500NDriver(InstrumentDriver):
         frequency_hz = params.get("frequency_hz", 5000)
         coupling = params.get("coupling", "COM")
         polarities = params.get("polarities", ["+", "-"])
+        duration_s = params.get("duration_s", STEP_DELAY_S)
 
         self._transport.write(cmd.SELECT_BURST_MENU)
         self._transport.write(cmd.SET_BURST_VOLTAGE.format(voltage=voltage))
@@ -47,8 +62,13 @@ class UCS500NDriver(InstrumentDriver):
             self._transport.write(cmd.SET_BURST_POLARITY.format(polarity=polarity))
             self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
             applied += 1
-            self._emit(on_progress, f"Burst aplicado — polaridade {polarity}")
-            time.sleep(STEP_DELAY_S)
+            self._emit(
+                on_progress, f"Burst aplicado — polaridade {polarity} ({duration_s:.1f}s)"
+            )
+            if _interruptible_sleep(duration_s, should_stop):
+                self._transport.write(cmd.STOP_TEST)
+                self._emit(on_progress, "Ensaio interrompido pelo operador")
+                return TestResult(passed=False, applied_events=applied)
 
         self._transport.write(cmd.STOP_TEST)
         return TestResult(passed=True, applied_events=applied)
@@ -58,6 +78,8 @@ class UCS500NDriver(InstrumentDriver):
         coupling = params.get("coupling", "L-N")
         polarities = params.get("polarities", ["+", "-"])
         phase_angles = params.get("phase_angles", [0, 90, 180, 270])
+        pulse_count = params.get("pulse_count", 1)
+        interval_s = params.get("interval_s", STEP_DELAY_S)
 
         self._transport.write(cmd.SELECT_SURGE_MENU)
         self._transport.write(cmd.SET_SURGE_VOLTAGE.format(voltage=voltage))
@@ -67,15 +89,22 @@ class UCS500NDriver(InstrumentDriver):
         applied = 0
         for polarity in polarities:
             for angle in phase_angles:
-                if should_stop and should_stop():
-                    self._emit(on_progress, "Ensaio interrompido pelo operador")
-                    return TestResult(passed=False, applied_events=applied)
                 self._transport.write(cmd.SET_SURGE_POLARITY.format(polarity=polarity))
                 self._transport.write(cmd.SET_SURGE_PHASE_ANGLE.format(angle_deg=angle))
-                self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
-                applied += 1
-                self._emit(on_progress, f"Surge aplicado — {polarity}, {angle}°")
-                time.sleep(STEP_DELAY_S)
+                for rep in range(pulse_count):
+                    if should_stop and should_stop():
+                        self._emit(on_progress, "Ensaio interrompido pelo operador")
+                        return TestResult(passed=False, applied_events=applied)
+                    self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
+                    applied += 1
+                    self._emit(
+                        on_progress,
+                        f"Surge aplicado — {polarity}, {angle}° (pulso {rep + 1}/{pulse_count})",
+                    )
+                    if rep < pulse_count - 1:
+                        if _interruptible_sleep(interval_s, should_stop):
+                            self._emit(on_progress, "Ensaio interrompido pelo operador")
+                            return TestResult(passed=False, applied_events=applied)
 
         self._transport.write(cmd.STOP_TEST)
         return TestResult(passed=True, applied_events=applied)

@@ -36,6 +36,7 @@ BURST_DURATION_MS_BY_FREQ = {5000: 15.0, 100000: 0.75}
 BURST_REPETITION_MS = 300
 BURST_COUPLINGS = ("COM", "ALL", "CCC")  # COM = IEC Ed.2 (2004), ALL = IEC Ed.1 (1995)
 BURST_POLARITIES = ("+", "-")
+BURST_DEFAULT_DURATION_S = 60.0  # duração default por polaridade — ajustável no roteiro
 
 SURGE_LEVELS = [
     SurgeLevel(1, 500),
@@ -50,6 +51,8 @@ SURGE_CURRENT_DURATION_US = 20
 SURGE_PHASE_ANGLES_DEG = (0, 90, 180, 270)
 SURGE_COUPLINGS = ("L-N", "L-PE", "N-PE", "L+N-PE")
 SURGE_POLARITIES = ("+", "-", "ALT")
+SURGE_DEFAULT_PULSE_COUNT = 1  # pulsos por combinação polaridade×ângulo — ajustável no roteiro
+SURGE_DEFAULT_INTERVAL_S = 1.0  # intervalo entre pulsos — ajustável no roteiro
 
 DIPS_LEVELS = [
     DipsLevel(1, 0, 10.0, 0.5),

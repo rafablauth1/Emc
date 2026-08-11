@@ -33,6 +33,7 @@ def _seed_burst() -> None:
             "frequency_hz": 5000,
             "coupling": "COM",
             "polarities": ["+", "-"],
+            "duration_s": 60,
         },
     )
 

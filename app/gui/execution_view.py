@@ -24,12 +24,15 @@ from PySide6.QtWidgets import (
 from app.config import AUTOMATED_STANDARDS, STANDARDS
 from app.core import planner, templates
 from app.core.standards import (
+    BURST_DEFAULT_DURATION_S,
     BURST_LEVELS,
     BURST_SPIKE_FREQUENCIES_HZ,
     DIPS_LEVELS,
     DIPS_PHASE_ANGLES_DEG,
     DIPS_SHORT_INTERRUPTION_MS,
     SURGE_COUPLINGS,
+    SURGE_DEFAULT_INTERVAL_S,
+    SURGE_DEFAULT_PULSE_COUNT,
     SURGE_LEVELS,
     SURGE_PHASE_ANGLES_DEG,
 )
@@ -129,6 +132,9 @@ class ExecutionView(QWidget):
         row = QHBoxLayout()
         combo = QComboBox()
         row.addWidget(combo, 1)
+        new_btn = QPushButton("Novo roteiro em branco")
+        new_btn.clicked.connect(lambda: self._new_routine(standard_code))
+        row.addWidget(new_btn)
         load_btn = QPushButton("Carregar")
         load_btn.clicked.connect(lambda: self._load_template(standard_code))
         row.addWidget(load_btn)
@@ -141,6 +147,32 @@ class ExecutionView(QWidget):
         form.addRow("Template:", row)
         self.template_combos[standard_code] = combo
         self._refresh_templates(standard_code)
+
+    def _new_routine(self, standard_code: str) -> None:
+        """Limpa o formulário da norma para valores padrão, pronto para montar um roteiro novo do zero."""
+        combo = self.template_combos.get(standard_code)
+        if combo is not None:
+            combo.setCurrentIndex(-1)
+
+        if standard_code == "4-4":
+            self.burst_voltage_spin.setValue(BURST_LEVELS[0].voltage)
+            self.burst_freq_combo.setCurrentIndex(0)
+            self.burst_coupling_combo.setCurrentIndex(0)
+            _set_checked_values(self.burst_polarity_list, ["+", "-"])
+            self.burst_duration_spin.setValue(BURST_DEFAULT_DURATION_S)
+        elif standard_code == "4-5":
+            self.surge_voltage_spin.setValue(SURGE_LEVELS[0].voltage)
+            self.surge_coupling_combo.setCurrentIndex(0)
+            _set_checked_values(self.surge_polarity_list, ["+", "-"])
+            _set_checked_values(self.surge_phase_list, [str(a) for a in SURGE_PHASE_ANGLES_DEG])
+            self.surge_pulse_count_spin.setValue(SURGE_DEFAULT_PULSE_COUNT)
+            self.surge_interval_spin.setValue(SURGE_DEFAULT_INTERVAL_S)
+        elif standard_code == "4-11":
+            self.dips_nominal_spin.setValue(230)
+            self.dips_freq_spin.setValue(50)
+            _set_checked_values(self.dips_phase_list, [str(a) for a in DIPS_PHASE_ANGLES_DEG])
+            self.dips_events_table.setRowCount(0)
+            self._add_dips_preset_event()
 
     def _refresh_templates(self, standard_code: str) -> None:
         combo = self.template_combos[standard_code]
@@ -219,6 +251,12 @@ class ExecutionView(QWidget):
         self.burst_polarity_list = _checkable_list(["+", "-"])
         form.addRow("Polaridades:", self.burst_polarity_list)
 
+        self.burst_duration_spin = QDoubleSpinBox()
+        self.burst_duration_spin.setRange(0.1, 600)
+        self.burst_duration_spin.setSuffix(" s")
+        self.burst_duration_spin.setValue(BURST_DEFAULT_DURATION_S)
+        form.addRow("Duração por polaridade:", self.burst_duration_spin)
+
         self._add_template_controls(form, "4-4")
         return page
 
@@ -262,6 +300,17 @@ class ExecutionView(QWidget):
         custom_angle_row.addWidget(self.surge_custom_angle_spin)
         custom_angle_row.addWidget(add_angle_btn)
         form.addRow("Ângulo personalizado:", custom_angle_row)
+
+        self.surge_pulse_count_spin = QSpinBox()
+        self.surge_pulse_count_spin.setRange(1, 100)
+        self.surge_pulse_count_spin.setValue(SURGE_DEFAULT_PULSE_COUNT)
+        form.addRow("Pulsos por combinação (polaridade × ângulo):", self.surge_pulse_count_spin)
+
+        self.surge_interval_spin = QDoubleSpinBox()
+        self.surge_interval_spin.setRange(0, 600)
+        self.surge_interval_spin.setSuffix(" s")
+        self.surge_interval_spin.setValue(SURGE_DEFAULT_INTERVAL_S)
+        form.addRow("Intervalo entre pulsos:", self.surge_interval_spin)
 
         self._add_template_controls(form, "4-5")
         return page
@@ -405,24 +454,30 @@ class ExecutionView(QWidget):
         if standard_code == "4-4":
             voltage = self.burst_voltage_spin.value()
             freq = self.burst_freq_combo.currentData()
+            duration_s = self.burst_duration_spin.value()
             params = {
                 "voltage": voltage,
                 "frequency_hz": freq,
                 "coupling": self.burst_coupling_combo.currentText(),
                 "polarities": _checked_values(self.burst_polarity_list),
+                "duration_s": duration_s,
             }
-            label = f"{voltage:.0f} V, {freq / 1000:.0f} kHz, {params['coupling']}"
+            label = f"{voltage:.0f} V, {freq / 1000:.0f} kHz, {params['coupling']}, {duration_s:.0f}s/polaridade"
             return params, label
 
         if standard_code == "4-5":
             voltage = self.surge_voltage_spin.value()
+            pulse_count = self.surge_pulse_count_spin.value()
+            interval_s = self.surge_interval_spin.value()
             params = {
                 "voltage": voltage,
                 "coupling": self.surge_coupling_combo.currentText(),
                 "polarities": _checked_values(self.surge_polarity_list),
                 "phase_angles": [int(a) for a in _checked_values(self.surge_phase_list)],
+                "pulse_count": pulse_count,
+                "interval_s": interval_s,
             }
-            label = f"{voltage:.0f} V, {params['coupling']}"
+            label = f"{voltage:.0f} V, {params['coupling']}, {pulse_count} pulso(s)/combinação"
             return params, label
 
         if standard_code == "4-11":
@@ -479,6 +534,7 @@ class ExecutionView(QWidget):
             if coupling_index >= 0:
                 self.burst_coupling_combo.setCurrentIndex(coupling_index)
             _set_checked_values(self.burst_polarity_list, params["polarities"])
+            self.burst_duration_spin.setValue(params.get("duration_s", BURST_DEFAULT_DURATION_S))
 
         elif standard_code == "4-5":
             self.surge_voltage_spin.setValue(params["voltage"])
@@ -488,6 +544,12 @@ class ExecutionView(QWidget):
             _set_checked_values(self.surge_polarity_list, params["polarities"])
             _set_checked_values(
                 self.surge_phase_list, [str(a) for a in params["phase_angles"]]
+            )
+            self.surge_pulse_count_spin.setValue(
+                params.get("pulse_count", SURGE_DEFAULT_PULSE_COUNT)
+            )
+            self.surge_interval_spin.setValue(
+                params.get("interval_s", SURGE_DEFAULT_INTERVAL_S)
             )
 
         elif standard_code == "4-11":
