@@ -71,12 +71,24 @@ class RoutineEditorDialog(QDialog):
         plus_btn.clicked.connect(lambda: self._add_point("+"))
         minus_btn = QPushButton("− Adicionar ponto (polo −)")
         minus_btn.clicked.connect(lambda: self._add_point("-"))
-        both_btn = QPushButton("Adicionar + e − de uma vez")
-        both_btn.clicked.connect(self._add_both_polarities)
         add_row.addWidget(plus_btn)
         add_row.addWidget(minus_btn)
-        add_row.addWidget(both_btn)
         layout.addLayout(add_row)
+
+        sequence_row = QHBoxLayout()
+        sequence_row.addWidget(QLabel("Gerar sequência — pulsos por polo:"))
+        self.polarity_count_spin = QSpinBox()
+        self.polarity_count_spin.setRange(1, 200)
+        self.polarity_count_spin.setValue(1)
+        sequence_row.addWidget(self.polarity_count_spin)
+        self.polarity_pattern_combo = QComboBox()
+        self.polarity_pattern_combo.addItem("Alternado (+ − + − ...)", "alternate")
+        self.polarity_pattern_combo.addItem("Em blocos (todos + depois todos −)", "block")
+        sequence_row.addWidget(self.polarity_pattern_combo)
+        generate_btn = QPushButton("Gerar sequência de polos")
+        generate_btn.clicked.connect(self._add_polarity_sequence)
+        sequence_row.addWidget(generate_btn)
+        layout.addLayout(sequence_row)
 
         if standard_code == "4-5":
             grid_row = QHBoxLayout()
@@ -248,11 +260,22 @@ class RoutineEditorDialog(QDialog):
         self.points.append(point)
         self._refresh_list()
 
-    def _add_both_polarities(self) -> None:
+    def _add_polarity_sequence(self) -> None:
+        """Gera N pulsos de cada polo usando os valores atuais dos campos, alternados
+        (+ − + − ...) ou em blocos (todos + depois todos −), conforme escolhido."""
         self._clear_status()
         base = self._current_field_values()
-        self.points.append({**base, "polarity": "+"})
-        self.points.append({**base, "polarity": "-"})
+        count = self.polarity_count_spin.value()
+        pattern = self.polarity_pattern_combo.currentData()
+        if pattern == "block":
+            for _ in range(count):
+                self.points.append({**base, "polarity": "+"})
+            for _ in range(count):
+                self.points.append({**base, "polarity": "-"})
+        else:
+            for _ in range(count):
+                self.points.append({**base, "polarity": "+"})
+                self.points.append({**base, "polarity": "-"})
         self._refresh_list()
 
     def _add_full_angle_grid(self) -> None:
