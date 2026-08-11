@@ -299,9 +299,16 @@ class ExecutionView(QWidget):
         form.addRow("Ângulos de fase (°):", self.dips_phase_list)
         layout.addLayout(form)
 
-        layout.addWidget(QLabel("Roteiro de eventos (dips/interrupções) — editável, na ordem de execução:"))
-        self.dips_events_table = QTableWidget(0, 2)
-        self.dips_events_table.setHorizontalHeaderLabels(["% Un (0 = interrupção)", "Duração (ms)"])
+        layout.addWidget(
+            QLabel(
+                "Roteiro de eventos (dips/interrupções) — editável, na ordem de execução.\n"
+                "Ângulos em branco usam os ângulos marcados acima; para vários ângulos separe por vírgula (ex: 0,180)."
+            )
+        )
+        self.dips_events_table = QTableWidget(0, 5)
+        self.dips_events_table.setHorizontalHeaderLabels(
+            ["% Un (0 = interrupção)", "Duração (ms)", "Repetições", "Ângulos (°)", "Intervalo entre repetições (ms)"]
+        )
         self.dips_events_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -347,11 +354,21 @@ class ExecutionView(QWidget):
     def _add_dips_blank_event(self) -> None:
         self._append_dips_row(40, 200.0)
 
-    def _append_dips_row(self, percent_un: float, duration_ms: float) -> None:
+    def _append_dips_row(
+        self,
+        percent_un: float,
+        duration_ms: float,
+        count: int = 1,
+        phase_angles: str = "",
+        interval_ms: str = "",
+    ) -> None:
         row = self.dips_events_table.rowCount()
         self.dips_events_table.insertRow(row)
         self.dips_events_table.setItem(row, 0, QTableWidgetItem(str(percent_un)))
         self.dips_events_table.setItem(row, 1, QTableWidgetItem(str(duration_ms)))
+        self.dips_events_table.setItem(row, 2, QTableWidgetItem(str(count)))
+        self.dips_events_table.setItem(row, 3, QTableWidgetItem(phase_angles))
+        self.dips_events_table.setItem(row, 4, QTableWidgetItem(interval_ms))
 
     def _remove_dips_event(self) -> None:
         row = self.dips_events_table.currentRow()
@@ -414,23 +431,40 @@ class ExecutionView(QWidget):
             for row in range(self.dips_events_table.rowCount()):
                 percent_item = self.dips_events_table.item(row, 0)
                 duration_item = self.dips_events_table.item(row, 1)
+                count_item = self.dips_events_table.item(row, 2)
+                angles_item = self.dips_events_table.item(row, 3)
+                interval_item = self.dips_events_table.item(row, 4)
                 if percent_item is None or duration_item is None:
                     continue
                 percent_un = float(percent_item.text())
                 duration_ms = float(duration_item.text())
                 if percent_un <= 0:
-                    events.append({"interruption": True, "duration_ms": duration_ms})
+                    event = {"interruption": True, "duration_ms": duration_ms}
                 else:
-                    events.append({"percent_un": percent_un, "duration_ms": duration_ms})
+                    event = {"percent_un": percent_un, "duration_ms": duration_ms}
+                count_text = count_item.text().strip() if count_item else ""
+                event["count"] = int(count_text) if count_text else 1
+                angles_text = angles_item.text().strip() if angles_item else ""
+                if angles_text:
+                    event["phase_angles"] = [int(a.strip()) for a in angles_text.split(",") if a.strip()]
+                interval_text = interval_item.text().strip() if interval_item else ""
+                if interval_text:
+                    event["interval_ms"] = float(interval_text)
+                events.append(event)
             if not events:
                 raise ValueError("Adicione ao menos um evento ao roteiro de dips antes de continuar.")
+            default_angles = [int(a) for a in _checked_values(self.dips_phase_list)] or [0]
             params = {
                 "nominal_voltage": nominal,
                 "frequency_hz": self.dips_freq_spin.value(),
-                "phase_angles": [int(a) for a in _checked_values(self.dips_phase_list)],
+                "phase_angles": default_angles,
                 "events": events,
             }
-            label = f"Roteiro com {len(events)} evento(s), Un={nominal:.0f} V"
+            total_pulses = sum(
+                event.get("count", 1) * len(event.get("phase_angles") or default_angles)
+                for event in events
+            )
+            label = f"Roteiro com {len(events)} tipo(s) de evento, {total_pulses} pulso(s), Un={nominal:.0f} V"
             return params, label
 
         raise ValueError(standard_code)
@@ -462,10 +496,11 @@ class ExecutionView(QWidget):
             _set_checked_values(self.dips_phase_list, [str(a) for a in params["phase_angles"]])
             self.dips_events_table.setRowCount(0)
             for event in params["events"]:
-                if event.get("interruption"):
-                    self._append_dips_row(0, event["duration_ms"])
-                else:
-                    self._append_dips_row(event["percent_un"], event["duration_ms"])
+                percent_un = 0 if event.get("interruption") else event["percent_un"]
+                count = event.get("count", 1)
+                angles = ",".join(str(a) for a in event["phase_angles"]) if event.get("phase_angles") else ""
+                interval = str(event["interval_ms"]) if event.get("interval_ms") else ""
+                self._append_dips_row(percent_un, event["duration_ms"], count, angles, interval)
 
     # ---- execução ----
 

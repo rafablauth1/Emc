@@ -74,6 +74,9 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+    from app.core.seed_data import seed_default_templates
+
+    seed_default_templates()
 
 
 @contextmanager
