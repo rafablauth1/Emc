@@ -7,6 +7,7 @@ from app.instruments.base import InstrumentDriver, TestResult
 
 STEP_DELAY_S = 0.3
 SLEEP_POLL_S = 0.2
+METER_TYPE_NAMES = {1: "monofásico", 2: "bifásico", 3: "trifásico"}
 
 
 def _interruptible_sleep(duration_s: float, should_stop: Optional[Callable[[], bool]]) -> bool:
@@ -31,11 +32,12 @@ class UCS500NDriver(InstrumentDriver):
         params: dict,
         on_progress: Optional[Callable[[str], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        wait_for_operator: Optional[Callable[[str], bool]] = None,
     ) -> TestResult:
         if standard_code == "4-4":
             return self._run_burst(params, on_progress, should_stop)
         if standard_code == "4-5":
-            return self._run_surge(params, on_progress, should_stop)
+            return self._run_surge(params, on_progress, should_stop, wait_for_operator)
         raise ValueError(f"UCS500NDriver não suporta a norma {standard_code}")
 
     def _emit(self, on_progress, message: str) -> None:
@@ -81,43 +83,65 @@ class UCS500NDriver(InstrumentDriver):
         self._transport.write(cmd.STOP_TEST)
         return TestResult(passed=True, applied_events=applied)
 
-    def _run_surge(self, params, on_progress, should_stop) -> TestResult:
+    def _run_surge(self, params, on_progress, should_stop, wait_for_operator=None) -> TestResult:
         points = surge_params_to_points(params)
         if not points:
             raise ValueError("Roteiro de surge sem pontos.")
+        meter_elements = params.get("meter_elements", 1)
+        meter_type = METER_TYPE_NAMES.get(meter_elements, f"{meter_elements} elementos")
 
         self._transport.write(cmd.SELECT_SURGE_MENU)
-        self._emit(on_progress, f"Surge — roteiro com {len(points)} ponto(s)")
-
         applied = 0
-        for index, point in enumerate(points):
-            voltage = point["voltage"]
-            coupling = point.get("coupling", "L-N")
-            polarity = point.get("polarity", "+")
-            angle = point.get("phase_angle", 0)
-            pulse_count = point.get("pulse_count", 1)
-            interval_s = point.get("interval_s", STEP_DELAY_S)
 
-            self._transport.write(cmd.SET_SURGE_VOLTAGE.format(voltage=voltage))
-            self._transport.write(cmd.SET_SURGE_COUPLING.format(coupling=coupling))
-            self._transport.write(cmd.SET_SURGE_POLARITY.format(polarity=polarity))
-            self._transport.write(cmd.SET_SURGE_PHASE_ANGLE.format(angle_deg=angle))
-
-            for rep in range(pulse_count):
+        for element in range(1, meter_elements + 1):
+            if element > 1:
+                message = (
+                    f"Pausa — altere o setup para o elemento {element}/{meter_elements} "
+                    f"do medidor ({meter_type}) e clique em Continuar."
+                )
+                self._emit(on_progress, message)
+                if wait_for_operator is not None:
+                    if not wait_for_operator(message):
+                        self._emit(on_progress, "Ensaio interrompido pelo operador")
+                        return TestResult(passed=False, applied_events=applied)
                 if should_stop and should_stop():
                     self._emit(on_progress, "Ensaio interrompido pelo operador")
                     return TestResult(passed=False, applied_events=applied)
-                self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
-                applied += 1
-                self._emit(
-                    on_progress,
-                    f"Ponto {index + 1}/{len(points)} — {voltage}V, {coupling}, "
-                    f"{polarity}, {angle}° (pulso {rep + 1}/{pulse_count})",
-                )
-                if rep < pulse_count - 1:
-                    if _interruptible_sleep(interval_s, should_stop):
+
+            self._emit(
+                on_progress,
+                f"Surge — elemento {element}/{meter_elements} ({meter_type}), "
+                f"roteiro com {len(points)} ponto(s)",
+            )
+
+            for index, point in enumerate(points):
+                voltage = point["voltage"]
+                coupling = point.get("coupling", "L-N")
+                polarity = point.get("polarity", "+")
+                angle = point.get("phase_angle", 0)
+                pulse_count = point.get("pulse_count", 1)
+                interval_s = point.get("interval_s", STEP_DELAY_S)
+
+                self._transport.write(cmd.SET_SURGE_VOLTAGE.format(voltage=voltage))
+                self._transport.write(cmd.SET_SURGE_COUPLING.format(coupling=coupling))
+                self._transport.write(cmd.SET_SURGE_POLARITY.format(polarity=polarity))
+                self._transport.write(cmd.SET_SURGE_PHASE_ANGLE.format(angle_deg=angle))
+
+                for rep in range(pulse_count):
+                    if should_stop and should_stop():
                         self._emit(on_progress, "Ensaio interrompido pelo operador")
                         return TestResult(passed=False, applied_events=applied)
+                    self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
+                    applied += 1
+                    self._emit(
+                        on_progress,
+                        f"Elemento {element}/{meter_elements} — ponto {index + 1}/{len(points)} — "
+                        f"{voltage}V, {coupling}, {polarity}, {angle}° (pulso {rep + 1}/{pulse_count})",
+                    )
+                    if rep < pulse_count - 1:
+                        if _interruptible_sleep(interval_s, should_stop):
+                            self._emit(on_progress, "Ensaio interrompido pelo operador")
+                            return TestResult(passed=False, applied_events=applied)
 
         self._transport.write(cmd.STOP_TEST)
         return TestResult(passed=True, applied_events=applied)

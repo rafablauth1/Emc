@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,6 +14,7 @@ class TestSessionWorker(QThread):
     gravando progresso e resultado no banco a cada etapa."""
 
     progress = Signal(str)
+    paused = Signal(str)  # mensagem para o operador (ex.: trocar setup para próximo elemento)
     finished_session = Signal(int)  # session_id
 
     def __init__(
@@ -38,12 +40,25 @@ class TestSessionWorker(QThread):
         self.params = params
         self._stop_requested = False
         self.session_id: Optional[int] = None
+        self._resume_event = threading.Event()
 
     def request_stop(self) -> None:
         self._stop_requested = True
+        self._resume_event.set()  # destrava imediatamente se estiver pausado esperando o operador
+
+    def resume(self) -> None:
+        self._resume_event.set()
 
     def _should_stop(self) -> bool:
         return self._stop_requested
+
+    def _wait_for_operator(self, message: str) -> bool:
+        """Pausa a thread do ensaio até o operador chamar resume() (ou parar o ensaio).
+        Retorna True se deve continuar, False se foi interrompido durante a pausa."""
+        self._resume_event.clear()
+        self.paused.emit(message)
+        self._resume_event.wait()
+        return not self._stop_requested
 
     def run(self) -> None:
         started_at = datetime.now(timezone.utc).isoformat()
@@ -58,7 +73,7 @@ class TestSessionWorker(QThread):
         try:
             self.driver.connect()
             result = self.driver.run_test(
-                self.standard_code, self.params, on_progress, self._should_stop
+                self.standard_code, self.params, on_progress, self._should_stop, self._wait_for_operator
             )
         except Exception as exc:
             on_progress(f"ERRO: {exc}")

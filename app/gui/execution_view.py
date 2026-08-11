@@ -40,6 +40,12 @@ from app.core.test_session import TestSessionWorker, set_session_result
 from app.gui.routine_editor import RoutineEditorDialog, describe_point
 from app.instruments.factory import build_driver_for_standard
 
+METER_TYPES = [
+    ("Monofásico — roda o roteiro 1x", 1),
+    ("Bifásico — roda o roteiro 2x (com pausa para trocar o setup)", 2),
+    ("Trifásico — roda o roteiro 3x (com pausa para trocar o setup)", 3),
+]
+
 
 def _checkable_list(values: list[str]) -> QListWidget:
     widget = QListWidget()
@@ -161,6 +167,7 @@ class ExecutionView(QWidget):
         elif standard_code == "4-5":
             self.surge_points = self._default_surge_points()
             self._refresh_points_summary("4-5")
+            self.surge_meter_type_combo.setCurrentIndex(0)
         elif standard_code == "4-11":
             self.dips_nominal_spin.setValue(230)
             self.dips_freq_spin.setValue(50)
@@ -308,6 +315,19 @@ class ExecutionView(QWidget):
     def _build_surge_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+
+        meter_form = QFormLayout()
+        self.surge_meter_type_combo = QComboBox()
+        for label, count in METER_TYPES:
+            self.surge_meter_type_combo.addItem(label, count)
+        meter_form.addRow("Tipo de medidor:", self.surge_meter_type_combo)
+        layout.addLayout(meter_form)
+        layout.addWidget(
+            QLabel(
+                "No bifásico/trifásico o mesmo roteiro roda 2x/3x — o ensaio pausa entre uma "
+                "repetição e outra e avisa no log para trocar o setup do medidor."
+            )
+        )
 
         layout.addWidget(
             QLabel(
@@ -471,10 +491,12 @@ class ExecutionView(QWidget):
         if standard_code == "4-5":
             if not self.surge_points:
                 raise ValueError("Adicione ao menos um ponto ao roteiro de surge antes de continuar.")
-            params = {"points": self.surge_points}
+            meter_elements = self.surge_meter_type_combo.currentData()
+            params = {"points": self.surge_points, "meter_elements": meter_elements}
             voltages = {p["voltage"] for p in self.surge_points}
             voltage_desc = f"{self.surge_points[0]['voltage']:.0f} V" if len(voltages) == 1 else "tensões variadas"
-            label = f"Roteiro com {len(self.surge_points)} ponto(s), {voltage_desc}"
+            meter_desc = {1: "monofásico", 2: "bifásico", 3: "trifásico"}.get(meter_elements, f"{meter_elements}x")
+            label = f"Roteiro com {len(self.surge_points)} ponto(s), {voltage_desc}, {meter_desc}"
             return params, label
 
         if standard_code == "4-11":
@@ -529,6 +551,8 @@ class ExecutionView(QWidget):
         elif standard_code == "4-5":
             self.surge_points = surge_params_to_points(params)
             self._refresh_points_summary("4-5")
+            meter_index = self.surge_meter_type_combo.findData(params.get("meter_elements", 1))
+            self.surge_meter_type_combo.setCurrentIndex(meter_index if meter_index >= 0 else 0)
 
         elif standard_code == "4-11":
             self.dips_nominal_spin.setValue(params["nominal_voltage"])
@@ -571,6 +595,7 @@ class ExecutionView(QWidget):
             params=params,
         )
         self.worker.progress.connect(self._on_progress)
+        self.worker.paused.connect(self._on_paused)
         self.worker.finished_session.connect(self._on_finished)
         self.log_view.clear()
         self.start_btn.setEnabled(False)
@@ -583,6 +608,23 @@ class ExecutionView(QWidget):
 
     def _on_progress(self, message: str) -> None:
         self.log_view.appendPlainText(message)
+
+    def _on_paused(self, message: str) -> None:
+        self.log_view.appendPlainText(f"*** PAUSA: {message} ***")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Pausa no ensaio")
+        box.setText(message)
+        continue_btn = box.addButton("Continuar ensaio", QMessageBox.ButtonRole.AcceptRole)
+        abort_btn = box.addButton("Abortar ensaio", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(continue_btn)
+        box.exec()
+        if self.worker is None:
+            return
+        if box.clickedButton() == abort_btn:
+            self.worker.request_stop()
+        else:
+            self.worker.resume()
 
     def _on_finished(self, session_id: int) -> None:
         self.start_btn.setEnabled(True)

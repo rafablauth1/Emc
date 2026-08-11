@@ -27,6 +27,7 @@ class Chroma615xxDriver(InstrumentDriver):
         params: dict,
         on_progress: Optional[Callable[[str], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        wait_for_operator: Optional[Callable[[str], bool]] = None,
     ) -> TestResult:
         if standard_code != "4-11":
             raise ValueError(f"Chroma615xxDriver não suporta a norma {standard_code}")
