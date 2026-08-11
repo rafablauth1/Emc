@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS reports (
     file_path TEXT NOT NULL,
     generated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    standard_code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    level_label TEXT,
+    params_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
