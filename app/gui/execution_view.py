@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
@@ -13,7 +14,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -27,7 +27,6 @@ from app.core.legacy_routines import burst_params_to_points, surge_params_to_poi
 from app.core.standards import (
     BURST_DEFAULT_DURATION_S,
     BURST_LEVELS,
-    BURST_POLARITIES,
     BURST_SPIKE_FREQUENCIES_HZ,
     DIPS_LEVELS,
     DIPS_PHASE_ANGLES_DEG,
@@ -36,9 +35,9 @@ from app.core.standards import (
     SURGE_DEFAULT_INTERVAL_S,
     SURGE_DEFAULT_PULSE_COUNT,
     SURGE_LEVELS,
-    SURGE_POLARITIES,
 )
 from app.core.test_session import TestSessionWorker, set_session_result
+from app.gui.routine_editor import RoutineEditorDialog, describe_point
 from app.instruments.factory import build_driver_for_standard
 
 
@@ -157,22 +156,11 @@ class ExecutionView(QWidget):
             combo.setCurrentIndex(-1)
 
         if standard_code == "4-4":
-            self.burst_voltage_spin.setValue(BURST_LEVELS[0].voltage)
-            self.burst_freq_combo.setCurrentIndex(0)
-            self.burst_coupling_combo.setCurrentIndex(0)
-            self.burst_polarity_combo.setCurrentIndex(0)
-            self.burst_duration_spin.setValue(BURST_DEFAULT_DURATION_S)
-            self.burst_points_table.setRowCount(0)
-            self._add_burst_point()
+            self.burst_points = self._default_burst_points()
+            self._refresh_points_summary("4-4")
         elif standard_code == "4-5":
-            self.surge_voltage_spin.setValue(SURGE_LEVELS[0].voltage)
-            self.surge_coupling_combo.setCurrentIndex(0)
-            self.surge_polarity_combo.setCurrentIndex(0)
-            self.surge_angle_spin.setValue(0)
-            self.surge_pulse_count_spin.setValue(SURGE_DEFAULT_PULSE_COUNT)
-            self.surge_interval_spin.setValue(SURGE_DEFAULT_INTERVAL_S)
-            self.surge_points_table.setRowCount(0)
-            self._add_surge_point()
+            self.surge_points = self._default_surge_points()
+            self._refresh_points_summary("4-5")
         elif standard_code == "4-11":
             self.dips_nominal_spin.setValue(230)
             self.dips_freq_spin.setValue(50)
@@ -221,9 +209,7 @@ class ExecutionView(QWidget):
         templates.delete_template(tpl["id"])
         self._refresh_templates(standard_code)
 
-    # ---- páginas de parâmetros por norma ----
-
-    # ---- utilitários genéricos de tabela (navegar/sequenciar pontos) ----
+    # ---- utilitários genéricos de tabela (usados pelo roteiro de dips) ----
 
     def _move_table_row(self, table: QTableWidget, delta: int) -> None:
         row = table.currentRow()
@@ -244,21 +230,49 @@ class ExecutionView(QWidget):
         if row >= 0:
             table.removeRow(row)
 
-    def _add_sequence_buttons(self, layout: QVBoxLayout, table: QTableWidget, add_callback) -> None:
-        row = QHBoxLayout()
-        add_btn = QPushButton("Adicionar ponto com os valores acima")
-        add_btn.clicked.connect(add_callback)
-        remove_btn = QPushButton("Remover ponto selecionado")
-        remove_btn.clicked.connect(lambda: self._remove_table_row(table))
-        up_btn = QPushButton("▲ Mover para cima")
-        up_btn.clicked.connect(lambda: self._move_table_row(table, -1))
-        down_btn = QPushButton("▼ Mover para baixo")
-        down_btn.clicked.connect(lambda: self._move_table_row(table, 1))
-        row.addWidget(add_btn)
-        row.addWidget(remove_btn)
-        row.addWidget(up_btn)
-        row.addWidget(down_btn)
-        layout.addLayout(row)
+    # ---- roteiro (sequência de pontos) de burst/surge — editado em sub-tela dedicada ----
+
+    def _refresh_points_summary(self, standard_code: str) -> None:
+        if standard_code == "4-4":
+            list_widget, points = self.burst_summary_list, self.burst_points
+        else:
+            list_widget, points = self.surge_summary_list, self.surge_points
+        list_widget.clear()
+        for i, point in enumerate(points):
+            list_widget.addItem(f"{i + 1}. {describe_point(standard_code, point)}")
+
+    def _open_routine_editor(self, standard_code: str) -> None:
+        points = self.burst_points if standard_code == "4-4" else self.surge_points
+        dialog = RoutineEditorDialog(standard_code, points, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if standard_code == "4-4":
+                self.burst_points = dialog.get_points()
+            else:
+                self.surge_points = dialog.get_points()
+            self._refresh_points_summary(standard_code)
+
+    def _default_burst_points(self) -> list[dict]:
+        return [
+            {
+                "voltage": BURST_LEVELS[0].voltage,
+                "frequency_hz": BURST_SPIKE_FREQUENCIES_HZ[0],
+                "coupling": "COM",
+                "polarity": "+",
+                "duration_s": BURST_DEFAULT_DURATION_S,
+            }
+        ]
+
+    def _default_surge_points(self) -> list[dict]:
+        return [
+            {
+                "voltage": SURGE_LEVELS[0].voltage,
+                "coupling": SURGE_COUPLINGS[0],
+                "polarity": "+",
+                "phase_angle": 0,
+                "pulse_count": SURGE_DEFAULT_PULSE_COUNT,
+                "interval_s": SURGE_DEFAULT_INTERVAL_S,
+            }
+        ]
 
     # ---- páginas de parâmetros por norma ----
 
@@ -266,175 +280,59 @@ class ExecutionView(QWidget):
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        form = QFormLayout()
-        preset_row = QHBoxLayout()
-        self.burst_preset_combo = QComboBox()
-        for level in BURST_LEVELS:
-            self.burst_preset_combo.addItem(f"Nível {level.level} — {level.voltage} V", level.voltage)
-        apply_preset_btn = QPushButton("Aplicar")
-        apply_preset_btn.clicked.connect(
-            lambda: self.burst_voltage_spin.setValue(self.burst_preset_combo.currentData())
-        )
-        preset_row.addWidget(self.burst_preset_combo, 1)
-        preset_row.addWidget(apply_preset_btn)
-        form.addRow("Nível padrão (IEC 61000-4-4):", preset_row)
-
-        self.burst_voltage_spin = QDoubleSpinBox()
-        self.burst_voltage_spin.setRange(0, 6000)
-        self.burst_voltage_spin.setSuffix(" V")
-        self.burst_voltage_spin.setValue(BURST_LEVELS[0].voltage)
-        form.addRow("Tensão do próximo ponto:", self.burst_voltage_spin)
-
-        self.burst_freq_combo = QComboBox()
-        for freq in BURST_SPIKE_FREQUENCIES_HZ:
-            self.burst_freq_combo.addItem(f"{freq / 1000:.0f} kHz", freq)
-        form.addRow("Frequência de repetição:", self.burst_freq_combo)
-
-        self.burst_coupling_combo = QComboBox()
-        self.burst_coupling_combo.addItems(["COM", "ALL", "CCC"])
-        form.addRow("Acoplamento:", self.burst_coupling_combo)
-
-        self.burst_polarity_combo = QComboBox()
-        self.burst_polarity_combo.addItems(list(BURST_POLARITIES))
-        form.addRow("Polaridade:", self.burst_polarity_combo)
-
-        self.burst_duration_spin = QDoubleSpinBox()
-        self.burst_duration_spin.setRange(0.1, 600)
-        self.burst_duration_spin.setSuffix(" s")
-        self.burst_duration_spin.setValue(BURST_DEFAULT_DURATION_S)
-        form.addRow("Duração deste ponto:", self.burst_duration_spin)
-        layout.addLayout(form)
-
         layout.addWidget(
             QLabel(
-                "Roteiro de burst — sequência de pontos (tensão/freq/acoplamento/polaridade/duração), "
-                "executados na ordem da tabela. Use os botões abaixo para adicionar, remover e reordenar."
+                "Roteiro de burst (IEC 61000-4-4) — sequência de pontos, executados na ordem abaixo.\n"
+                "Clique em \"Editar roteiro...\" para montar a sequência (sempre dá para adicionar o "
+                "polo + e o polo − juntos, de uma vez)."
             )
         )
-        self.burst_points_table = QTableWidget(0, 5)
-        self.burst_points_table.setHorizontalHeaderLabels(
-            ["Tensão (V)", "Frequência (Hz)", "Acoplamento", "Polaridade", "Duração (s)"]
-        )
-        self.burst_points_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
-        layout.addWidget(self.burst_points_table)
-        self._add_sequence_buttons(layout, self.burst_points_table, self._add_burst_point)
+        self.burst_summary_list = QListWidget()
+        self.burst_summary_list.setMinimumHeight(160)
+        layout.addWidget(self.burst_summary_list, 1)
+
+        edit_row = QHBoxLayout()
+        edit_btn = QPushButton("Editar roteiro...")
+        edit_btn.clicked.connect(lambda: self._open_routine_editor("4-4"))
+        edit_row.addWidget(edit_btn)
+        layout.addLayout(edit_row)
 
         template_form = QFormLayout()
         self._add_template_controls(template_form, "4-4")
         layout.addLayout(template_form)
 
-        self._add_burst_point()
+        self.burst_points = self._default_burst_points()
+        self._refresh_points_summary("4-4")
         return page
-
-    def _add_burst_point(self) -> None:
-        self._append_burst_row(
-            self.burst_voltage_spin.value(),
-            self.burst_freq_combo.currentData(),
-            self.burst_coupling_combo.currentText(),
-            self.burst_polarity_combo.currentText(),
-            self.burst_duration_spin.value(),
-        )
-
-    def _append_burst_row(self, voltage, frequency_hz, coupling, polarity, duration_s) -> None:
-        row = self.burst_points_table.rowCount()
-        self.burst_points_table.insertRow(row)
-        self.burst_points_table.setItem(row, 0, QTableWidgetItem(str(voltage)))
-        self.burst_points_table.setItem(row, 1, QTableWidgetItem(str(frequency_hz)))
-        self.burst_points_table.setItem(row, 2, QTableWidgetItem(str(coupling)))
-        self.burst_points_table.setItem(row, 3, QTableWidgetItem(str(polarity)))
-        self.burst_points_table.setItem(row, 4, QTableWidgetItem(str(duration_s)))
 
     def _build_surge_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        form = QFormLayout()
-        preset_row = QHBoxLayout()
-        self.surge_preset_combo = QComboBox()
-        for level in SURGE_LEVELS:
-            self.surge_preset_combo.addItem(f"Nível {level.level} — {level.voltage} V", level.voltage)
-        apply_preset_btn = QPushButton("Aplicar")
-        apply_preset_btn.clicked.connect(
-            lambda: self.surge_voltage_spin.setValue(self.surge_preset_combo.currentData())
-        )
-        preset_row.addWidget(self.surge_preset_combo, 1)
-        preset_row.addWidget(apply_preset_btn)
-        form.addRow("Nível padrão (IEC 61000-4-5):", preset_row)
-
-        self.surge_voltage_spin = QDoubleSpinBox()
-        self.surge_voltage_spin.setRange(0, 7000)
-        self.surge_voltage_spin.setSuffix(" V")
-        self.surge_voltage_spin.setValue(SURGE_LEVELS[0].voltage)
-        form.addRow("Tensão do próximo ponto:", self.surge_voltage_spin)
-
-        self.surge_coupling_combo = QComboBox()
-        self.surge_coupling_combo.addItems(list(SURGE_COUPLINGS))
-        form.addRow("Acoplamento:", self.surge_coupling_combo)
-
-        self.surge_polarity_combo = QComboBox()
-        self.surge_polarity_combo.addItems(list(SURGE_POLARITIES))
-        form.addRow("Polaridade:", self.surge_polarity_combo)
-
-        self.surge_angle_spin = QSpinBox()
-        self.surge_angle_spin.setRange(0, 359)
-        form.addRow("Ângulo de fase (°):", self.surge_angle_spin)
-
-        self.surge_pulse_count_spin = QSpinBox()
-        self.surge_pulse_count_spin.setRange(1, 100)
-        self.surge_pulse_count_spin.setValue(SURGE_DEFAULT_PULSE_COUNT)
-        form.addRow("Pulsos neste ponto:", self.surge_pulse_count_spin)
-
-        self.surge_interval_spin = QDoubleSpinBox()
-        self.surge_interval_spin.setRange(0, 600)
-        self.surge_interval_spin.setSuffix(" s")
-        self.surge_interval_spin.setValue(SURGE_DEFAULT_INTERVAL_S)
-        form.addRow("Intervalo entre pulsos deste ponto:", self.surge_interval_spin)
-        layout.addLayout(form)
-
         layout.addWidget(
             QLabel(
-                "Roteiro de surge — sequência de pontos (tensão/acoplamento/polaridade/ângulo/pulsos), "
-                "executados na ordem da tabela. Use os botões abaixo para adicionar, remover e reordenar."
+                "Roteiro de surge (IEC 61000-4-5) — sequência de pontos, executados na ordem abaixo.\n"
+                "Clique em \"Editar roteiro...\" para montar a sequência (sempre dá para adicionar o "
+                "polo + e o polo − juntos, de uma vez, ou a grade completa de ângulos × polos)."
             )
         )
-        self.surge_points_table = QTableWidget(0, 6)
-        self.surge_points_table.setHorizontalHeaderLabels(
-            ["Tensão (V)", "Acoplamento", "Polaridade", "Ângulo (°)", "Pulsos", "Intervalo (s)"]
-        )
-        self.surge_points_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
-        layout.addWidget(self.surge_points_table)
-        self._add_sequence_buttons(layout, self.surge_points_table, self._add_surge_point)
+        self.surge_summary_list = QListWidget()
+        self.surge_summary_list.setMinimumHeight(160)
+        layout.addWidget(self.surge_summary_list, 1)
+
+        edit_row = QHBoxLayout()
+        edit_btn = QPushButton("Editar roteiro...")
+        edit_btn.clicked.connect(lambda: self._open_routine_editor("4-5"))
+        edit_row.addWidget(edit_btn)
+        layout.addLayout(edit_row)
 
         template_form = QFormLayout()
         self._add_template_controls(template_form, "4-5")
         layout.addLayout(template_form)
 
-        self._add_surge_point()
+        self.surge_points = self._default_surge_points()
+        self._refresh_points_summary("4-5")
         return page
-
-    def _add_surge_point(self) -> None:
-        self._append_surge_row(
-            self.surge_voltage_spin.value(),
-            self.surge_coupling_combo.currentText(),
-            self.surge_polarity_combo.currentText(),
-            self.surge_angle_spin.value(),
-            self.surge_pulse_count_spin.value(),
-            self.surge_interval_spin.value(),
-        )
-
-    def _append_surge_row(self, voltage, coupling, polarity, angle, pulse_count, interval_s) -> None:
-        row = self.surge_points_table.rowCount()
-        self.surge_points_table.insertRow(row)
-        self.surge_points_table.setItem(row, 0, QTableWidgetItem(str(voltage)))
-        self.surge_points_table.setItem(row, 1, QTableWidgetItem(str(coupling)))
-        self.surge_points_table.setItem(row, 2, QTableWidgetItem(str(polarity)))
-        self.surge_points_table.setItem(row, 3, QTableWidgetItem(str(angle)))
-        self.surge_points_table.setItem(row, 4, QTableWidgetItem(str(pulse_count)))
-        self.surge_points_table.setItem(row, 5, QTableWidgetItem(str(interval_s)))
 
     def _build_dips_page(self) -> QWidget:
         page = QWidget()
@@ -562,59 +460,21 @@ class ExecutionView(QWidget):
 
     def _collect_params(self, standard_code: str) -> tuple[dict, str]:
         if standard_code == "4-4":
-            points = []
-            for row in range(self.burst_points_table.rowCount()):
-                v_item = self.burst_points_table.item(row, 0)
-                f_item = self.burst_points_table.item(row, 1)
-                c_item = self.burst_points_table.item(row, 2)
-                p_item = self.burst_points_table.item(row, 3)
-                d_item = self.burst_points_table.item(row, 4)
-                if v_item is None or not v_item.text().strip():
-                    continue
-                points.append(
-                    {
-                        "voltage": float(v_item.text()),
-                        "frequency_hz": float(f_item.text()) if f_item and f_item.text().strip() else 5000,
-                        "coupling": c_item.text().strip() if c_item and c_item.text().strip() else "COM",
-                        "polarity": p_item.text().strip() if p_item and p_item.text().strip() else "+",
-                        "duration_s": float(d_item.text()) if d_item and d_item.text().strip() else BURST_DEFAULT_DURATION_S,
-                    }
-                )
-            if not points:
+            if not self.burst_points:
                 raise ValueError("Adicione ao menos um ponto ao roteiro de burst antes de continuar.")
-            params = {"points": points}
-            voltages = {p["voltage"] for p in points}
-            voltage_desc = f"{points[0]['voltage']:.0f} V" if len(voltages) == 1 else "tensões variadas"
-            label = f"Roteiro com {len(points)} ponto(s), {voltage_desc}"
+            params = {"points": self.burst_points}
+            voltages = {p["voltage"] for p in self.burst_points}
+            voltage_desc = f"{self.burst_points[0]['voltage']:.0f} V" if len(voltages) == 1 else "tensões variadas"
+            label = f"Roteiro com {len(self.burst_points)} ponto(s), {voltage_desc}"
             return params, label
 
         if standard_code == "4-5":
-            points = []
-            for row in range(self.surge_points_table.rowCount()):
-                v_item = self.surge_points_table.item(row, 0)
-                c_item = self.surge_points_table.item(row, 1)
-                p_item = self.surge_points_table.item(row, 2)
-                a_item = self.surge_points_table.item(row, 3)
-                n_item = self.surge_points_table.item(row, 4)
-                i_item = self.surge_points_table.item(row, 5)
-                if v_item is None or not v_item.text().strip():
-                    continue
-                points.append(
-                    {
-                        "voltage": float(v_item.text()),
-                        "coupling": c_item.text().strip() if c_item and c_item.text().strip() else "L-N",
-                        "polarity": p_item.text().strip() if p_item and p_item.text().strip() else "+",
-                        "phase_angle": int(float(a_item.text())) if a_item and a_item.text().strip() else 0,
-                        "pulse_count": int(n_item.text()) if n_item and n_item.text().strip() else SURGE_DEFAULT_PULSE_COUNT,
-                        "interval_s": float(i_item.text()) if i_item and i_item.text().strip() else SURGE_DEFAULT_INTERVAL_S,
-                    }
-                )
-            if not points:
+            if not self.surge_points:
                 raise ValueError("Adicione ao menos um ponto ao roteiro de surge antes de continuar.")
-            params = {"points": points}
-            voltages = {p["voltage"] for p in points}
-            voltage_desc = f"{points[0]['voltage']:.0f} V" if len(voltages) == 1 else "tensões variadas"
-            label = f"Roteiro com {len(points)} ponto(s), {voltage_desc}"
+            params = {"points": self.surge_points}
+            voltages = {p["voltage"] for p in self.surge_points}
+            voltage_desc = f"{self.surge_points[0]['voltage']:.0f} V" if len(voltages) == 1 else "tensões variadas"
+            label = f"Roteiro com {len(self.surge_points)} ponto(s), {voltage_desc}"
             return params, label
 
         if standard_code == "4-11":
@@ -663,58 +523,12 @@ class ExecutionView(QWidget):
 
     def _apply_params(self, standard_code: str, params: dict) -> None:
         if standard_code == "4-4":
-            points = burst_params_to_points(params)
-            self.burst_points_table.setRowCount(0)
-            for point in points:
-                self._append_burst_row(
-                    point["voltage"],
-                    point.get("frequency_hz", 5000),
-                    point.get("coupling", "COM"),
-                    point.get("polarity", "+"),
-                    point.get("duration_s", BURST_DEFAULT_DURATION_S),
-                )
-            if points:
-                last = points[-1]
-                self.burst_voltage_spin.setValue(last["voltage"])
-                freq_index = self.burst_freq_combo.findData(last.get("frequency_hz", 5000))
-                if freq_index >= 0:
-                    self.burst_freq_combo.setCurrentIndex(freq_index)
-                coupling_index = self.burst_coupling_combo.findText(last.get("coupling", "COM"))
-                if coupling_index >= 0:
-                    self.burst_coupling_combo.setCurrentIndex(coupling_index)
-                polarity_index = self.burst_polarity_combo.findText(last.get("polarity", "+"))
-                if polarity_index >= 0:
-                    self.burst_polarity_combo.setCurrentIndex(polarity_index)
-                self.burst_duration_spin.setValue(last.get("duration_s", BURST_DEFAULT_DURATION_S))
+            self.burst_points = burst_params_to_points(params)
+            self._refresh_points_summary("4-4")
 
         elif standard_code == "4-5":
-            points = surge_params_to_points(params)
-            self.surge_points_table.setRowCount(0)
-            for point in points:
-                self._append_surge_row(
-                    point["voltage"],
-                    point.get("coupling", "L-N"),
-                    point.get("polarity", "+"),
-                    point.get("phase_angle", 0),
-                    point.get("pulse_count", SURGE_DEFAULT_PULSE_COUNT),
-                    point.get("interval_s", SURGE_DEFAULT_INTERVAL_S),
-                )
-            if points:
-                last = points[-1]
-                self.surge_voltage_spin.setValue(last["voltage"])
-                coupling_index = self.surge_coupling_combo.findText(last.get("coupling", "L-N"))
-                if coupling_index >= 0:
-                    self.surge_coupling_combo.setCurrentIndex(coupling_index)
-                polarity_index = self.surge_polarity_combo.findText(last.get("polarity", "+"))
-                if polarity_index >= 0:
-                    self.surge_polarity_combo.setCurrentIndex(polarity_index)
-                self.surge_angle_spin.setValue(last.get("phase_angle", 0))
-                self.surge_pulse_count_spin.setValue(
-                    last.get("pulse_count", SURGE_DEFAULT_PULSE_COUNT)
-                )
-                self.surge_interval_spin.setValue(
-                    last.get("interval_s", SURGE_DEFAULT_INTERVAL_S)
-                )
+            self.surge_points = surge_params_to_points(params)
+            self._refresh_points_summary("4-5")
 
         elif standard_code == "4-11":
             self.dips_nominal_spin.setValue(params["nominal_voltage"])
