@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Dados locais do app (banco e laudos gerados) — não versionar
+data/*.db
+reports/*.docx
+reports/*.pdf
+
+# Logs locais
+*.log
+
+# IDE
+.vscode/
+.idea/
