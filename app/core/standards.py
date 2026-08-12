@@ -57,7 +57,13 @@ SURGE_DEFAULT_INTERVAL_S = 1.0  # intervalo entre pulsos — ajustável no rotei
 # Combinações de fase para medidor bi/trifásico — o roteiro roda uma vez por combinação
 # selecionada, com pausa para o operador trocar o setup entre uma e outra. Quais combinações
 # se aplicam depende do medidor sob ensaio, por isso a seleção é sempre manual do operador.
-SURGE_METER_PHASE_COMBINATIONS = ("L1-N", "L2-N", "L3-N", "L1-L2", "L1-L3", "L2-L3")
+# As 9 combinações (linha-neutro, linha-terra e linha-linha) vêm da tabela de sincronismo de
+# fase do manual EM TEST UCS 500Nx V5.16, §10.1.4 (p.49-50) — antes faltavam as 3 de linha-terra.
+SURGE_METER_PHASE_COMBINATIONS = (
+    "L1-N", "L2-N", "L3-N",
+    "L1-PE", "L2-PE", "L3-PE",
+    "L1-L2", "L1-L3", "L2-L3",
+)
 
 DIPS_LEVELS = [
     DipsLevel(1, 0, 10.0, 0.5),

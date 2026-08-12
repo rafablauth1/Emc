@@ -343,7 +343,7 @@ class ExecutionView(QWidget):
             )
         )
         self.surge_phase_combo_list = _checkable_list(list(SURGE_METER_PHASE_COMBINATIONS))
-        self.surge_phase_combo_list.setMaximumHeight(140)
+        self.surge_phase_combo_list.setMaximumHeight(190)
         _set_checked_values(self.surge_phase_combo_list, DEFAULT_PHASE_COMBINATIONS)
         layout.addWidget(self.surge_phase_combo_list)
 
