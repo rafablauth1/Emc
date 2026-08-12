@@ -85,3 +85,26 @@ outro com NI-MAX). O NI-MAX tem uma ferramenta de log/trace de comunicação
 instrumento — isso revela o protocolo real, sem precisar adivinhar nada.
 Se você tiver ou conseguir o iec.control instalado em algum PC, isso
 resolveria de vez.
+
+ATUALIZAÇÃO — existe um manual de comandos remotos de verdade
+-----------------------------------------------------------------
+Confirmado (lendo o manual oficial do software iec.control, versão 10.2.0,
+fabricante AMETEK CTS — dono atual da marca EM TEST): existe um documento
+separado chamado literalmente "Manual for remote commands". Ele NÃO é
+publicado avulso na internet — só vem junto da instalação do iec.control,
+na pasta:
+
+  C:\Users\Public\Documents\AMETEK CTS\iec.control\Manual\
+
+Duas formas de conseguir:
+  1. Se o iec.control já estiver instalado em QUALQUER PC da empresa
+     (mesmo que não seja usado pra nada hoje), esse manual já está
+     nessa pasta — só copiar.
+  2. Pedir direto pra AMETEK CTS / EM TEST (fabricante) esse documento
+     pelo nome — como é um manual oficial deles, o suporte técnico
+     deveria fornecer sem muita burocracia.
+
+Bônus: o mesmo software grava um arquivo "Monitor.txt" com todo o
+tráfego de comandos enviado ao gerador durante o uso normal — se algum
+dia o iec.control rodar de verdade (mesmo só uma demo), esse arquivo
+revela os comandos reais na hora, sem precisar de mais nada.
