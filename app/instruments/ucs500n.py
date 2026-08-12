@@ -1,6 +1,7 @@
 import time
 from typing import Callable, Optional
 
+from app.core.command_overrides import load_overrides
 from app.core.legacy_routines import burst_params_to_points, surge_params_to_points
 from app.instruments import ucs500n_commands as cmd
 from app.instruments.base import InstrumentDriver, TestResult
@@ -26,8 +27,16 @@ def _interruptible_sleep(duration_s: float, should_stop: Optional[Callable[[], b
 class UCS500NDriver(InstrumentDriver):
     """EM TEST UCS 500N — Burst (IEC 61000-4-4) e Surge (IEC 61000-4-5)."""
 
+    def _cmd(self, name: str, **kwargs) -> str:
+        """Monta a string de comando, usando o valor salvo em Configurações >
+        Comandos do UCS 500N se o operador já tiver descoberto/confirmado um, senão
+        cai no placeholder padrão de app/instruments/ucs500n_commands.py."""
+        overrides = load_overrides()
+        template = overrides.get(name) or getattr(cmd, name)
+        return template.format(**kwargs) if kwargs else template
+
     def set_test_on(self, state: bool) -> None:
-        self._transport.write(cmd.TEST_ON if state else cmd.TEST_OFF)
+        self._transport.write(self._cmd("TEST_ON" if state else "TEST_OFF"))
 
     def run_test(
         self,
@@ -52,7 +61,7 @@ class UCS500NDriver(InstrumentDriver):
         if not points:
             raise ValueError("Roteiro de burst sem pontos.")
 
-        self._transport.write(cmd.SELECT_BURST_MENU)
+        self._transport.write(self._cmd("SELECT_BURST_MENU"))
         self._emit(on_progress, f"Burst — roteiro com {len(points)} ponto(s)")
 
         applied = 0
@@ -67,11 +76,11 @@ class UCS500NDriver(InstrumentDriver):
             polarity = point.get("polarity", "+")
             duration_s = point.get("duration_s", STEP_DELAY_S)
 
-            self._transport.write(cmd.SET_BURST_VOLTAGE.format(voltage=voltage))
-            self._transport.write(cmd.SET_BURST_FREQUENCY.format(frequency_hz=frequency_hz))
-            self._transport.write(cmd.SET_BURST_COUPLING.format(coupling=coupling))
-            self._transport.write(cmd.SET_BURST_POLARITY.format(polarity=polarity))
-            self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
+            self._transport.write(self._cmd("SET_BURST_VOLTAGE", voltage=voltage))
+            self._transport.write(self._cmd("SET_BURST_FREQUENCY", frequency_hz=frequency_hz))
+            self._transport.write(self._cmd("SET_BURST_COUPLING", coupling=coupling))
+            self._transport.write(self._cmd("SET_BURST_POLARITY", polarity=polarity))
+            self._transport.query(self._cmd("TRIGGER_SINGLE_EVENT"))
             applied += 1
             self._emit(
                 on_progress,
@@ -79,11 +88,11 @@ class UCS500NDriver(InstrumentDriver):
                 f"{coupling}, polaridade {polarity} ({duration_s:.1f}s)",
             )
             if _interruptible_sleep(duration_s, should_stop):
-                self._transport.write(cmd.STOP_TEST)
+                self._transport.write(self._cmd("STOP_TEST"))
                 self._emit(on_progress, "Ensaio interrompido pelo operador")
                 return TestResult(passed=False, applied_events=applied)
 
-        self._transport.write(cmd.STOP_TEST)
+        self._transport.write(self._cmd("STOP_TEST"))
         return TestResult(passed=True, applied_events=applied)
 
     def _run_surge(self, params, on_progress, should_stop, wait_for_operator=None) -> TestResult:
@@ -94,7 +103,7 @@ class UCS500NDriver(InstrumentDriver):
         if not combinations:
             raise ValueError("Selecione ao menos uma combinação de fase para o surge.")
 
-        self._transport.write(cmd.SELECT_SURGE_MENU)
+        self._transport.write(self._cmd("SELECT_SURGE_MENU"))
         applied = 0
 
         for combo_index, combination in enumerate(combinations):
@@ -126,16 +135,16 @@ class UCS500NDriver(InstrumentDriver):
                 pulse_count = point.get("pulse_count", 1)
                 interval_s = point.get("interval_s", STEP_DELAY_S)
 
-                self._transport.write(cmd.SET_SURGE_VOLTAGE.format(voltage=voltage))
-                self._transport.write(cmd.SET_SURGE_COUPLING.format(coupling=coupling))
-                self._transport.write(cmd.SET_SURGE_POLARITY.format(polarity=polarity))
-                self._transport.write(cmd.SET_SURGE_PHASE_ANGLE.format(angle_deg=angle))
+                self._transport.write(self._cmd("SET_SURGE_VOLTAGE", voltage=voltage))
+                self._transport.write(self._cmd("SET_SURGE_COUPLING", coupling=coupling))
+                self._transport.write(self._cmd("SET_SURGE_POLARITY", polarity=polarity))
+                self._transport.write(self._cmd("SET_SURGE_PHASE_ANGLE", angle_deg=angle))
 
                 for rep in range(pulse_count):
                     if should_stop and should_stop():
                         self._emit(on_progress, "Ensaio interrompido pelo operador")
                         return TestResult(passed=False, applied_events=applied)
-                    self._transport.query(cmd.TRIGGER_SINGLE_EVENT)
+                    self._transport.query(self._cmd("TRIGGER_SINGLE_EVENT"))
                     applied += 1
                     self._emit(
                         on_progress,
@@ -147,5 +156,5 @@ class UCS500NDriver(InstrumentDriver):
                             self._emit(on_progress, "Ensaio interrompido pelo operador")
                             return TestResult(passed=False, applied_events=applied)
 
-        self._transport.write(cmd.STOP_TEST)
+        self._transport.write(self._cmd("STOP_TEST"))
         return TestResult(passed=True, applied_events=applied)

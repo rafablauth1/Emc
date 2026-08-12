@@ -12,9 +12,29 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core import command_overrides
 from app.core.comm_test import CommTestWorker
 from app.core.runtime_settings import settings
+from app.instruments import ucs500n_commands as ucs_cmd
 from app.instruments.factory import build_chroma_driver, build_ucs500n_driver
+
+UCS500N_COMMAND_FIELDS = [
+    ("SELECT_BURST_MENU", "Selecionar menu Burst"),
+    ("SELECT_SURGE_MENU", "Selecionar menu Surge"),
+    ("TEST_ON", "TEST ON (ligar saída)"),
+    ("TEST_OFF", "TEST OFF (desligar saída)"),
+    ("SET_BURST_VOLTAGE", "Burst — tensão (use {voltage})"),
+    ("SET_BURST_FREQUENCY", "Burst — frequência (use {frequency_hz})"),
+    ("SET_BURST_COUPLING", "Burst — acoplamento (use {coupling})"),
+    ("SET_BURST_POLARITY", "Burst — polaridade (use {polarity})"),
+    ("SET_SURGE_VOLTAGE", "Surge — tensão (use {voltage})"),
+    ("SET_SURGE_PHASE_ANGLE", "Surge — ângulo (use {angle_deg})"),
+    ("SET_SURGE_COUPLING", "Surge — acoplamento (use {coupling})"),
+    ("SET_SURGE_POLARITY", "Surge — polaridade (use {polarity})"),
+    ("TRIGGER_SINGLE_EVENT", "Disparar pulso único"),
+    ("STOP_TEST", "Parar ensaio"),
+    ("QUERY_STATUS", "Consultar status"),
+]
 
 
 class SettingsView(QWidget):
@@ -122,6 +142,35 @@ class SettingsView(QWidget):
         terminal_input_row.addWidget(terminal_query_btn)
         layout.addLayout(terminal_input_row)
 
+        layout.addWidget(
+            QLabel(
+                "Comandos do UCS 500N (editável) — o dicionário de comandos oficial do "
+                "fabricante não é público, então os valores abaixo são tentativas, não "
+                "confirmados. Descubra os certos testando no Terminal GPIB acima e cole "
+                "aqui embaixo; \"Salvar comandos\" já vale pro próximo TEST ON e pros "
+                "próximos ensaios de burst/surge, sem precisar reiniciar o app."
+            )
+        )
+        cmd_form = QFormLayout()
+        self.ucs_command_edits: dict[str, QLineEdit] = {}
+        overrides = command_overrides.load_overrides()
+        for key, label in UCS500N_COMMAND_FIELDS:
+            edit = QLineEdit(overrides.get(key, getattr(ucs_cmd, key)))
+            cmd_form.addRow(f"{label}:", edit)
+            self.ucs_command_edits[key] = edit
+        layout.addLayout(cmd_form)
+
+        cmd_btn_row = QHBoxLayout()
+        save_cmd_btn = QPushButton("Salvar comandos")
+        save_cmd_btn.clicked.connect(self._save_ucs_commands)
+        cmd_btn_row.addWidget(save_cmd_btn)
+        restore_cmd_btn = QPushButton("Restaurar tentativas padrão")
+        restore_cmd_btn.clicked.connect(self._restore_ucs_commands)
+        cmd_btn_row.addWidget(restore_cmd_btn)
+        self.ucs_command_status = QLabel("")
+        cmd_btn_row.addWidget(self.ucs_command_status, 1)
+        layout.addLayout(cmd_btn_row)
+
         layout.addStretch()
 
     def _on_sim_toggled(self, checked: bool) -> None:
@@ -207,3 +256,19 @@ class SettingsView(QWidget):
             self._terminal_log_line(f"< {response}")
         except Exception as exc:
             self._terminal_log_line(f"-- erro: {exc} --")
+
+    # ---- comandos do UCS 500N (sobrescrita salva em disco) ----
+
+    def _save_ucs_commands(self) -> None:
+        overrides = {key: edit.text() for key, edit in self.ucs_command_edits.items()}
+        command_overrides.save_overrides(overrides)
+        self.ucs_command_status.setStyleSheet("color: green;")
+        self.ucs_command_status.setText(
+            "Salvo — já vale para o próximo TEST ON e para o próximo ensaio."
+        )
+
+    def _restore_ucs_commands(self) -> None:
+        for key, edit in self.ucs_command_edits.items():
+            edit.setText(getattr(ucs_cmd, key))
+        self.ucs_command_status.setStyleSheet("")
+        self.ucs_command_status.setText("Restaurado para as tentativas padrão (não salvo ainda).")
