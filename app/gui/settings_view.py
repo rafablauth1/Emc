@@ -27,6 +27,17 @@ class SettingsView(QWidget):
             )
         )
 
+        self.buzzer_checkbox = QCheckBox("Buzzer nas pausas do ensaio (troca de ligação)")
+        self.buzzer_checkbox.setChecked(settings.buzzer_enabled)
+        self.buzzer_checkbox.toggled.connect(self._on_buzzer_toggled)
+        layout.addWidget(self.buzzer_checkbox)
+        layout.addWidget(
+            QLabel(
+                "Quando o ensaio pausa pedindo pra trocar a ligação do medidor, toca um "
+                "buzzer além do aviso na tela. Desmarque para deixar só o aviso visual."
+            )
+        )
+
         form = QFormLayout()
         self.ucs_addr_spin = QSpinBox()
         self.ucs_addr_spin.setRange(1, 31)
@@ -49,3 +60,6 @@ class SettingsView(QWidget):
 
     def _on_sim_toggled(self, checked: bool) -> None:
         settings.simulation_mode = checked
+
+    def _on_buzzer_toggled(self, checked: bool) -> None:
+        settings.buzzer_enabled = checked

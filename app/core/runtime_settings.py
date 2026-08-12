@@ -8,6 +8,7 @@ class RuntimeSettings:
     simulation_mode: bool = SIMULATION_MODE
     gpib_addresses: dict = field(default_factory=lambda: dict(DEFAULT_GPIB_ADDRESSES))
     serial_ports: dict = field(default_factory=lambda: dict(DEFAULT_SERIAL_PORTS))
+    buzzer_enabled: bool = True
 
 
 settings = RuntimeSettings()

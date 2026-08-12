@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from app.config import AUTOMATED_STANDARDS, STANDARDS
 from app.core import planner, templates
 from app.core.legacy_routines import burst_params_to_points, surge_params_to_points
+from app.core.runtime_settings import settings as runtime_settings
 from app.core.standards import (
     BURST_DEFAULT_DURATION_S,
     BURST_LEVELS,
@@ -638,14 +639,16 @@ class ExecutionView(QWidget):
 
     def _alert_operator(self) -> None:
         """Chama a atenção do operador para uma pausa que exige troca física de ligação:
-        buzzer (beeps) + piscar a janela na barra de tarefas + trazer a janela pra frente."""
-        try:
-            import winsound
+        buzzer (beeps, se habilitado nas configurações) + piscar a janela na barra de
+        tarefas + trazer a janela pra frente."""
+        if runtime_settings.buzzer_enabled:
+            try:
+                import winsound
 
-            for _ in range(3):
-                winsound.Beep(1200, 250)
-        except Exception:
-            pass
+                for _ in range(3):
+                    winsound.Beep(1200, 250)
+            except Exception:
+                pass
         window = self.window()
         QApplication.alert(window)
         window.raise_()
