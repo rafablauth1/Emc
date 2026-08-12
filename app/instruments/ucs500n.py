@@ -7,7 +7,7 @@ from app.instruments.base import InstrumentDriver, TestResult
 
 STEP_DELAY_S = 0.3
 SLEEP_POLL_S = 0.2
-METER_TYPE_NAMES = {1: "monofásico", 2: "bifásico", 3: "trifásico"}
+DEFAULT_PHASE_COMBINATIONS = ["L1-N"]
 
 
 def _interruptible_sleep(duration_s: float, should_stop: Optional[Callable[[], bool]]) -> bool:
@@ -87,17 +87,18 @@ class UCS500NDriver(InstrumentDriver):
         points = surge_params_to_points(params)
         if not points:
             raise ValueError("Roteiro de surge sem pontos.")
-        meter_elements = params.get("meter_elements", 1)
-        meter_type = METER_TYPE_NAMES.get(meter_elements, f"{meter_elements} elementos")
+        combinations = params.get("phase_combinations") or DEFAULT_PHASE_COMBINATIONS
+        if not combinations:
+            raise ValueError("Selecione ao menos uma combinação de fase para o surge.")
 
         self._transport.write(cmd.SELECT_SURGE_MENU)
         applied = 0
 
-        for element in range(1, meter_elements + 1):
-            if element > 1:
+        for combo_index, combination in enumerate(combinations):
+            if combo_index > 0:
                 message = (
-                    f"Pausa — altere o setup para o elemento {element}/{meter_elements} "
-                    f"do medidor ({meter_type}) e clique em Continuar."
+                    f"Pausa — altere o setup do medidor para {combination} "
+                    "e clique em Continuar."
                 )
                 self._emit(on_progress, message)
                 if wait_for_operator is not None:
@@ -110,7 +111,7 @@ class UCS500NDriver(InstrumentDriver):
 
             self._emit(
                 on_progress,
-                f"Surge — elemento {element}/{meter_elements} ({meter_type}), "
+                f"Surge — combinação {combination} ({combo_index + 1}/{len(combinations)}), "
                 f"roteiro com {len(points)} ponto(s)",
             )
 
@@ -135,7 +136,7 @@ class UCS500NDriver(InstrumentDriver):
                     applied += 1
                     self._emit(
                         on_progress,
-                        f"Elemento {element}/{meter_elements} — ponto {index + 1}/{len(points)} — "
+                        f"{combination} — ponto {index + 1}/{len(points)} — "
                         f"{voltage}V, {coupling}, {polarity}, {angle}° (pulso {rep + 1}/{pulse_count})",
                     )
                     if rep < pulse_count - 1:

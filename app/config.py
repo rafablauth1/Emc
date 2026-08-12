@@ -1,6 +1,13 @@
+import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    # Empacotado com PyInstaller (.exe portátil) — dados ficam ao lado do .exe,
+    # não na pasta temporária de extração (que some quando o programa fecha).
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
 DATA_DIR = BASE_DIR / "data"
 REPORTS_DIR = BASE_DIR / "reports"
 DB_PATH = DATA_DIR / "app.db"

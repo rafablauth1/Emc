@@ -17,3 +17,8 @@ reports/*.pdf
 # IDE
 .vscode/
 .idea/
+
+# Build do PyInstaller (.exe gerado localmente — não versionar o binário)
+build/
+dist/
+*.spec

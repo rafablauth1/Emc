@@ -35,16 +35,13 @@ from app.core.standards import (
     SURGE_DEFAULT_INTERVAL_S,
     SURGE_DEFAULT_PULSE_COUNT,
     SURGE_LEVELS,
+    SURGE_METER_PHASE_COMBINATIONS,
 )
 from app.core.test_session import TestSessionWorker, set_session_result
 from app.gui.routine_editor import RoutineEditorDialog, describe_point
 from app.instruments.factory import build_driver_for_standard
 
-METER_TYPES = [
-    ("Monofásico — roda o roteiro 1x", 1),
-    ("Bifásico — roda o roteiro 2x (com pausa para trocar o setup)", 2),
-    ("Trifásico — roda o roteiro 3x (com pausa para trocar o setup)", 3),
-]
+DEFAULT_PHASE_COMBINATIONS = ["L1-N"]
 
 
 def _checkable_list(values: list[str]) -> QListWidget:
@@ -167,7 +164,7 @@ class ExecutionView(QWidget):
         elif standard_code == "4-5":
             self.surge_points = self._default_surge_points()
             self._refresh_points_summary("4-5")
-            self.surge_meter_type_combo.setCurrentIndex(0)
+            _set_checked_values(self.surge_phase_combo_list, DEFAULT_PHASE_COMBINATIONS)
         elif standard_code == "4-11":
             self.dips_nominal_spin.setValue(230)
             self.dips_freq_spin.setValue(50)
@@ -316,18 +313,17 @@ class ExecutionView(QWidget):
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        meter_form = QFormLayout()
-        self.surge_meter_type_combo = QComboBox()
-        for label, count in METER_TYPES:
-            self.surge_meter_type_combo.addItem(label, count)
-        meter_form.addRow("Tipo de medidor:", self.surge_meter_type_combo)
-        layout.addLayout(meter_form)
         layout.addWidget(
             QLabel(
-                "No bifásico/trifásico o mesmo roteiro roda 2x/3x — o ensaio pausa entre uma "
-                "repetição e outra e avisa no log para trocar o setup do medidor."
+                "Combinações de fase a testar (medidor bi/trifásico) — marque as que se aplicam "
+                "ao seu medidor. O mesmo roteiro roda uma vez por combinação marcada; o ensaio "
+                "pausa entre uma e outra e avisa no log para trocar o setup."
             )
         )
+        self.surge_phase_combo_list = _checkable_list(list(SURGE_METER_PHASE_COMBINATIONS))
+        self.surge_phase_combo_list.setMaximumHeight(140)
+        _set_checked_values(self.surge_phase_combo_list, DEFAULT_PHASE_COMBINATIONS)
+        layout.addWidget(self.surge_phase_combo_list)
 
         layout.addWidget(
             QLabel(
@@ -491,12 +487,20 @@ class ExecutionView(QWidget):
         if standard_code == "4-5":
             if not self.surge_points:
                 raise ValueError("Adicione ao menos um ponto ao roteiro de surge antes de continuar.")
-            meter_elements = self.surge_meter_type_combo.currentData()
-            params = {"points": self.surge_points, "meter_elements": meter_elements}
+            combinations = [
+                combo
+                for combo in SURGE_METER_PHASE_COMBINATIONS
+                if combo in _checked_values(self.surge_phase_combo_list)
+            ]
+            if not combinations:
+                raise ValueError("Marque ao menos uma combinação de fase (ex: L1-N) antes de continuar.")
+            params = {"points": self.surge_points, "phase_combinations": combinations}
             voltages = {p["voltage"] for p in self.surge_points}
             voltage_desc = f"{self.surge_points[0]['voltage']:.0f} V" if len(voltages) == 1 else "tensões variadas"
-            meter_desc = {1: "monofásico", 2: "bifásico", 3: "trifásico"}.get(meter_elements, f"{meter_elements}x")
-            label = f"Roteiro com {len(self.surge_points)} ponto(s), {voltage_desc}, {meter_desc}"
+            label = (
+                f"Roteiro com {len(self.surge_points)} ponto(s), {voltage_desc}, "
+                f"{len(combinations)} combinação(ões) de fase ({', '.join(combinations)})"
+            )
             return params, label
 
         if standard_code == "4-11":
@@ -551,8 +555,12 @@ class ExecutionView(QWidget):
         elif standard_code == "4-5":
             self.surge_points = surge_params_to_points(params)
             self._refresh_points_summary("4-5")
-            meter_index = self.surge_meter_type_combo.findData(params.get("meter_elements", 1))
-            self.surge_meter_type_combo.setCurrentIndex(meter_index if meter_index >= 0 else 0)
+            combinations = params.get("phase_combinations")
+            if not combinations:
+                # compatibilidade com o formato anterior (meter_elements: int, sem escolha de fase)
+                meter_elements = params.get("meter_elements", 1)
+                combinations = list(SURGE_METER_PHASE_COMBINATIONS[:meter_elements]) or DEFAULT_PHASE_COMBINATIONS
+            _set_checked_values(self.surge_phase_combo_list, combinations)
 
         elif standard_code == "4-11":
             self.dips_nominal_spin.setValue(params["nominal_voltage"])

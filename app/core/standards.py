@@ -54,6 +54,11 @@ SURGE_POLARITIES = ("+", "-", "ALT")
 SURGE_DEFAULT_PULSE_COUNT = 1  # pulsos por combinação polaridade×ângulo — ajustável no roteiro
 SURGE_DEFAULT_INTERVAL_S = 1.0  # intervalo entre pulsos — ajustável no roteiro
 
+# Combinações de fase para medidor bi/trifásico — o roteiro roda uma vez por combinação
+# selecionada, com pausa para o operador trocar o setup entre uma e outra. Quais combinações
+# se aplicam depende do medidor sob ensaio, por isso a seleção é sempre manual do operador.
+SURGE_METER_PHASE_COMBINATIONS = ("L1-N", "L2-N", "L3-N", "L1-L2", "L1-L3", "L2-L3")
+
 DIPS_LEVELS = [
     DipsLevel(1, 0, 10.0, 0.5),
     DipsLevel(2, 0, 20.0, 1),
