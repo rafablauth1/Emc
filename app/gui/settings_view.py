@@ -1,8 +1,11 @@
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -18,6 +21,7 @@ class SettingsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._comm_test_workers: dict[str, CommTestWorker] = {}
+        self._terminal_driver = None
         layout = QVBoxLayout(self)
 
         self.sim_checkbox = QCheckBox("Modo simulado (sem hardware GPIB)")
@@ -79,6 +83,45 @@ class SettingsView(QWidget):
         chroma_test_row.addWidget(self.chroma_test_status, 1)
         layout.addLayout(chroma_test_row)
 
+        layout.addWidget(
+            QLabel(
+                "Terminal GPIB (comando bruto) — pra descobrir/testar os comandos reais de um "
+                "instrumento na mão, digitando direto (ex: enquanto não se tem o dicionário de "
+                "comandos do UCS 500N)."
+            )
+        )
+        terminal_top_row = QHBoxLayout()
+        self.terminal_instrument_combo = QComboBox()
+        self.terminal_instrument_combo.addItem("EM TEST UCS 500N", "ucs500n")
+        self.terminal_instrument_combo.addItem("Chroma 61501/61504", "chroma")
+        terminal_top_row.addWidget(self.terminal_instrument_combo)
+        self.terminal_connect_btn = QPushButton("Conectar")
+        self.terminal_connect_btn.setCheckable(True)
+        self.terminal_connect_btn.toggled.connect(self._toggle_terminal_connection)
+        terminal_top_row.addWidget(self.terminal_connect_btn)
+        terminal_top_row.addStretch(1)
+        layout.addLayout(terminal_top_row)
+
+        self.terminal_log = QPlainTextEdit()
+        self.terminal_log.setReadOnly(True)
+        self.terminal_log.setMaximumHeight(160)
+        layout.addWidget(self.terminal_log)
+
+        terminal_input_row = QHBoxLayout()
+        self.terminal_command_edit = QLineEdit()
+        self.terminal_command_edit.setPlaceholderText(
+            "Digite um comando (ex: *IDN?, TEST ON, OUTP ON...) e Enter consulta"
+        )
+        self.terminal_command_edit.returnPressed.connect(self._terminal_query)
+        terminal_input_row.addWidget(self.terminal_command_edit, 1)
+        terminal_write_btn = QPushButton("Enviar (write)")
+        terminal_write_btn.clicked.connect(self._terminal_write)
+        terminal_input_row.addWidget(terminal_write_btn)
+        terminal_query_btn = QPushButton("Consultar (query)")
+        terminal_query_btn.clicked.connect(self._terminal_query)
+        terminal_input_row.addWidget(terminal_query_btn)
+        layout.addLayout(terminal_input_row)
+
         layout.addStretch()
 
     def _on_sim_toggled(self, checked: bool) -> None:
@@ -103,3 +146,64 @@ class SettingsView(QWidget):
         else:
             status_label.setStyleSheet("color: red;")
             status_label.setText(f"Falhou — {message}")
+
+    # ---- terminal GPIB (comando bruto) ----
+
+    def _terminal_log_line(self, text: str) -> None:
+        self.terminal_log.appendPlainText(text)
+
+    def _toggle_terminal_connection(self, checked: bool) -> None:
+        if checked:
+            instrument = self.terminal_instrument_combo.currentData()
+            factory = build_ucs500n_driver if instrument == "ucs500n" else build_chroma_driver
+            try:
+                driver = factory()
+                driver.connect()
+                self._terminal_driver = driver
+                self.terminal_connect_btn.setText("Desconectar")
+                self.terminal_instrument_combo.setEnabled(False)
+                self._terminal_log_line(
+                    f"-- conectado ({self.terminal_instrument_combo.currentText()}) --"
+                )
+            except Exception as exc:
+                self._terminal_log_line(f"-- erro ao conectar: {exc} --")
+                self.terminal_connect_btn.blockSignals(True)
+                self.terminal_connect_btn.setChecked(False)
+                self.terminal_connect_btn.blockSignals(False)
+        else:
+            if self._terminal_driver is not None:
+                try:
+                    self._terminal_driver.disconnect()
+                except Exception:
+                    pass
+                self._terminal_driver = None
+            self.terminal_connect_btn.setText("Conectar")
+            self.terminal_instrument_combo.setEnabled(True)
+            self._terminal_log_line("-- desconectado --")
+
+    def _terminal_write(self) -> None:
+        command = self.terminal_command_edit.text().strip()
+        if not command:
+            return
+        if self._terminal_driver is None:
+            self._terminal_log_line("-- conecte antes de enviar um comando --")
+            return
+        try:
+            self._terminal_driver.write(command)
+            self._terminal_log_line(f"> {command}")
+        except Exception as exc:
+            self._terminal_log_line(f"-- erro: {exc} --")
+
+    def _terminal_query(self) -> None:
+        command = self.terminal_command_edit.text().strip()
+        if not command:
+            return
+        if self._terminal_driver is None:
+            self._terminal_log_line("-- conecte antes de consultar um comando --")
+            return
+        try:
+            response = self._terminal_driver.query(command)
+            self._terminal_log_line(f"> {command}")
+            self._terminal_log_line(f"< {response}")
+        except Exception as exc:
+            self._terminal_log_line(f"-- erro: {exc} --")

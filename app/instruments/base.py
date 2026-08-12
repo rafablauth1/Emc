@@ -25,6 +25,15 @@ class InstrumentDriver(ABC):
     def idn(self) -> str:
         return self._transport.query("*IDN?")
 
+    def write(self, command: str) -> None:
+        """Envia um comando bruto direto pro transport — usado pelo terminal GPIB
+        manual em Configurações, para descobrir/testar comandos reais do instrumento."""
+        self._transport.write(command)
+
+    def query(self, command: str) -> str:
+        """Envia um comando bruto e retorna a resposta — mesma finalidade de write()."""
+        return self._transport.query(command)
+
     def set_test_on(self, state: bool) -> None:
         """Liga/desliga a saída do gerador manualmente, fora de um ensaio automatizado.
         Nem todo instrumento suporta isso — a implementação padrão não faz nada."""
