@@ -1,5 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -619,10 +620,11 @@ class ExecutionView(QWidget):
 
     def _on_paused(self, message: str) -> None:
         self.log_view.appendPlainText(f"*** PAUSA: {message} ***")
+        self._alert_operator()
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("Pausa no ensaio")
-        box.setText(message)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Pausa no ensaio — altere a ligação")
+        box.setText(f"ATENÇÃO — interação física necessária:\n\n{message}")
         continue_btn = box.addButton("Continuar ensaio", QMessageBox.ButtonRole.AcceptRole)
         abort_btn = box.addButton("Abortar ensaio", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(continue_btn)
@@ -633,6 +635,21 @@ class ExecutionView(QWidget):
             self.worker.request_stop()
         else:
             self.worker.resume()
+
+    def _alert_operator(self) -> None:
+        """Chama a atenção do operador para uma pausa que exige troca física de ligação:
+        buzzer (beeps) + piscar a janela na barra de tarefas + trazer a janela pra frente."""
+        try:
+            import winsound
+
+            for _ in range(3):
+                winsound.Beep(1200, 250)
+        except Exception:
+            pass
+        window = self.window()
+        QApplication.alert(window)
+        window.raise_()
+        window.activateWindow()
 
     def _on_finished(self, session_id: int) -> None:
         self.start_btn.setEnabled(True)
