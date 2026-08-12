@@ -25,6 +25,10 @@ class InstrumentDriver(ABC):
     def idn(self) -> str:
         return self._transport.query("*IDN?")
 
+    def set_test_on(self, state: bool) -> None:
+        """Liga/desliga a saída do gerador manualmente, fora de um ensaio automatizado.
+        Nem todo instrumento suporta isso — a implementação padrão não faz nada."""
+
     @abstractmethod
     def run_test(
         self,

@@ -26,6 +26,9 @@ def _interruptible_sleep(duration_s: float, should_stop: Optional[Callable[[], b
 class UCS500NDriver(InstrumentDriver):
     """EM TEST UCS 500N — Burst (IEC 61000-4-4) e Surge (IEC 61000-4-5)."""
 
+    def set_test_on(self, state: bool) -> None:
+        self._transport.write(cmd.TEST_ON if state else cmd.TEST_OFF)
+
     def run_test(
         self,
         standard_code: str,

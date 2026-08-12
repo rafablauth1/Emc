@@ -16,6 +16,11 @@ IDN_QUERY = "*IDN?"
 SELECT_BURST_MENU = "TODO:SELECT_BURST"
 SELECT_SURGE_MENU = "TODO:SELECT_SURGE"
 
+# "TEST ON" — habilita/desabilita a saída do gerador (arma o interlock de segurança).
+# Controlável manualmente pelo operador, independente de rodar um ensaio automatizado.
+TEST_ON = "TODO:TEST_ON"
+TEST_OFF = "TODO:TEST_OFF"
+
 # Parâmetros de Burst (ver manual seção 9.1.1 / 9.3)
 SET_BURST_VOLTAGE = "TODO:BURST_V {voltage}"
 SET_BURST_FREQUENCY = "TODO:BURST_F {frequency_hz}"

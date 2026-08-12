@@ -39,6 +39,7 @@ class TestSessionWorker(QThread):
         self.level_label = level_label
         self.params = params
         self._stop_requested = False
+        self._pause_requested = False
         self.session_id: Optional[int] = None
         self._resume_event = threading.Event()
 
@@ -46,10 +47,20 @@ class TestSessionWorker(QThread):
         self._stop_requested = True
         self._resume_event.set()  # destrava imediatamente se estiver pausado esperando o operador
 
+    def request_pause(self) -> None:
+        """Pede pausa na próxima oportunidade segura (o driver consulta should_stop()
+        entre um pulso/ponto e outro). Retoma exatamente de onde parou."""
+        self._pause_requested = True
+
     def resume(self) -> None:
         self._resume_event.set()
 
     def _should_stop(self) -> bool:
+        if self._pause_requested and not self._stop_requested:
+            self._pause_requested = False
+            self._resume_event.clear()
+            self.paused.emit("Ensaio pausado pelo operador. Clique em Continuar para retomar de onde parou.")
+            self._resume_event.wait()
         return self._stop_requested
 
     def _wait_for_operator(self, message: str) -> bool:

@@ -88,6 +88,8 @@ class ExecutionView(QWidget):
         super().__init__(parent)
         self.worker: TestSessionWorker | None = None
         self.template_combos: dict[str, QComboBox] = {}
+        self._manual_driver = None  # driver conectado manualmente via botão TEST ON
+        self._manual_driver_standard: str | None = None
 
         layout = QVBoxLayout(self)
 
@@ -115,11 +117,29 @@ class ExecutionView(QWidget):
         self.params_stack.addWidget(self._build_dips_page())
         layout.addWidget(self.params_stack)
 
+        self.test_on_widget = QWidget()
+        test_on_row = QHBoxLayout(self.test_on_widget)
+        test_on_row.setContentsMargins(0, 0, 0, 0)
+        self.test_on_btn = QPushButton("TEST ON (ligar saída do UCS 500N)")
+        self.test_on_btn.setCheckable(True)
+        self.test_on_btn.toggled.connect(self._toggle_test_on)
+        test_on_row.addWidget(self.test_on_btn)
+        test_on_row.addWidget(
+            QLabel("Liga/desliga a saída do gerador manualmente, fora de um ensaio automatizado.")
+        )
+        test_on_row.addStretch(1)
+        layout.addWidget(self.test_on_widget)
+        self._on_standard_changed(self.standard_combo.currentIndex())
+
         button_row = QHBoxLayout()
         self.start_btn = QPushButton("Iniciar ensaio")
         self.start_btn.clicked.connect(self._start_test)
         button_row.addWidget(self.start_btn)
-        self.stop_btn = QPushButton("Parar")
+        self.pause_btn = QPushButton("Pausar ensaio")
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.clicked.connect(self._pause_test)
+        button_row.addWidget(self.pause_btn)
+        self.stop_btn = QPushButton("Parar (aborta)")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop_test)
         button_row.addWidget(self.stop_btn)
@@ -452,6 +472,11 @@ class ExecutionView(QWidget):
 
     def _on_standard_changed(self, index: int) -> None:
         self.params_stack.setCurrentIndex(index)
+        standard_code = self.standard_combo.itemData(index)
+        supports_test_on = standard_code in ("4-4", "4-5")
+        self.test_on_widget.setVisible(supports_test_on)
+        if self._manual_driver is not None and self._manual_driver_standard != standard_code:
+            self._disconnect_manual_driver()
 
     # ---- projeto ----
 
@@ -593,6 +618,8 @@ class ExecutionView(QWidget):
             QMessageBox.warning(self, "Ensaio", "Informe o EUT antes de iniciar.")
             return
 
+        self._disconnect_manual_driver()
+
         driver = build_driver_for_standard(standard_code)
         self.worker = TestSessionWorker(
             driver=driver,
@@ -609,8 +636,61 @@ class ExecutionView(QWidget):
         self.worker.finished_session.connect(self._on_finished)
         self.log_view.clear()
         self.start_btn.setEnabled(False)
+        self.pause_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
+        self.test_on_btn.setEnabled(False)
         self.worker.start()
+
+    # ---- TEST ON manual (fora de um ensaio automatizado) ----
+
+    def _toggle_test_on(self, checked: bool) -> None:
+        standard_code = self.standard_combo.currentData()
+        if checked:
+            try:
+                if self._manual_driver is None or self._manual_driver_standard != standard_code:
+                    self._close_manual_driver()
+                    driver = build_driver_for_standard(standard_code)
+                    driver.connect()
+                    self._manual_driver = driver
+                    self._manual_driver_standard = standard_code
+                self._manual_driver.set_test_on(True)
+                self.test_on_btn.setText("TEST ON (ligado) — clique para desligar")
+            except Exception as exc:
+                QMessageBox.warning(self, "TEST ON", f"Não foi possível ligar o TEST ON: {exc}")
+                self._close_manual_driver()
+                self.test_on_btn.blockSignals(True)
+                self.test_on_btn.setChecked(False)
+                self.test_on_btn.blockSignals(False)
+        else:
+            self._close_manual_driver()
+            self.test_on_btn.setText("TEST ON (ligar saída do UCS 500N)")
+
+    def _close_manual_driver(self) -> None:
+        """Fecha a conexão manual do TEST ON, sem mexer no estado visual do botão
+        (usado tanto ao desligar de propósito quanto antes de reconectar em outra norma)."""
+        if self._manual_driver is not None:
+            try:
+                self._manual_driver.set_test_on(False)
+            except Exception:
+                pass
+            try:
+                self._manual_driver.disconnect()
+            except Exception:
+                pass
+            self._manual_driver = None
+            self._manual_driver_standard = None
+
+    def _disconnect_manual_driver(self) -> None:
+        """Fecha a conexão manual do TEST ON e reseta o botão pro estado desligado."""
+        self._close_manual_driver()
+        self.test_on_btn.blockSignals(True)
+        self.test_on_btn.setChecked(False)
+        self.test_on_btn.setText("TEST ON (ligar saída do UCS 500N)")
+        self.test_on_btn.blockSignals(False)
+
+    def _pause_test(self) -> None:
+        if self.worker is not None:
+            self.worker.request_pause()
 
     def _stop_test(self) -> None:
         if self.worker is not None:
@@ -624,8 +704,8 @@ class ExecutionView(QWidget):
         self._alert_operator()
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Pausa no ensaio — altere a ligação")
-        box.setText(f"ATENÇÃO — interação física necessária:\n\n{message}")
+        box.setWindowTitle("Pausa no ensaio")
+        box.setText(f"ATENÇÃO:\n\n{message}")
         continue_btn = box.addButton("Continuar ensaio", QMessageBox.ButtonRole.AcceptRole)
         abort_btn = box.addButton("Abortar ensaio", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(continue_btn)
@@ -656,7 +736,9 @@ class ExecutionView(QWidget):
 
     def _on_finished(self, session_id: int) -> None:
         self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
+        self.test_on_btn.setEnabled(True)
         self.log_view.appendPlainText("--- Ensaio finalizado ---")
 
         result, ok = QInputDialog.getItem(
