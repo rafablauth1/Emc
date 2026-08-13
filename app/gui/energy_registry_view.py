@@ -26,17 +26,16 @@ COL_ENSAIO = 0
 COL_METROLOGISTA = 1
 COL_TENSAO_LABEL = 2
 COL_VALOR_V = 3
-COL_FOTO = 4
-COL_CODIGO = 5
-COL_LEGENDA = 6
-COL_DATA_INI = 7
-COL_REG_INI = 8
-COL_DATA_FIM = 9
-COL_REG_FIM = 10
-COL_OBS = 11
+COL_CODIGO = 4
+COL_LEGENDA = 5
+COL_DATA_INI = 6
+COL_REG_INI = 7
+COL_DATA_FIM = 8
+COL_REG_FIM = 9
+COL_OBS = 10
 
 COLUMN_LABELS = [
-    "Ensaio", "Metrologista", "Tensão", "Valor (V)", "Foto Realizada",
+    "Ensaio", "Metrologista", "Tensão", "Valor (V)",
     "Código", "Legenda", "Data Inicial", "Registro Inicial",
     "Data Final", "Registro Final", "Observações",
 ]
@@ -87,8 +86,12 @@ class EnergyRegistryView(QWidget):
         generator_form.addRow("Tensão (rótulo):", self.gen_tensao_edit)
         self.gen_valor_edit = QLineEdit()
         generator_form.addRow("Valor (V):", self.gen_valor_edit)
-        self.gen_foto_checkbox = QCheckBox("Foto realizada")
-        generator_form.addRow("", self.gen_foto_checkbox)
+        self.gen_data_inicial_edit = QLineEdit()
+        self.gen_data_inicial_edit.setPlaceholderText("mesma data pra todos os códigos gerados")
+        generator_form.addRow("Data Inicial:", self.gen_data_inicial_edit)
+        self.gen_data_final_edit = QLineEdit()
+        self.gen_data_final_edit.setPlaceholderText("mesma data pra todos os códigos gerados")
+        generator_form.addRow("Data Final:", self.gen_data_final_edit)
         self.gen_clock_mode_checkbox = QCheckBox(
             "Modo relógio (1 leitura só, com a duração total do ensaio)"
         )
@@ -131,10 +134,16 @@ class EnergyRegistryView(QWidget):
         down_btn = QPushButton("▼ Mover para baixo")
         down_btn.clicked.connect(lambda: self._move_row(1))
         btn_row.addWidget(down_btn)
+        layout.addLayout(btn_row)
+
+        btn_row2 = QHBoxLayout()
         sort_btn = QPushButton("Ordenar por consumo de energia")
         sort_btn.clicked.connect(self._sort_by_consumption)
-        btn_row.addWidget(sort_btn)
-        layout.addLayout(btn_row)
+        btn_row2.addWidget(sort_btn)
+        chain_btn = QPushButton("Encadear ensaios (final → inicial)...")
+        chain_btn.clicked.connect(self._open_chain_dialog)
+        btn_row2.addWidget(chain_btn)
+        layout.addLayout(btn_row2)
 
         save_row = QHBoxLayout()
         save_btn = QPushButton("Salvar registro")
@@ -233,13 +242,6 @@ class EnergyRegistryView(QWidget):
         self.table.setItem(row, COL_TENSAO_LABEL, QTableWidgetItem(leitura.get("tensao_label", "")))
         self.table.setItem(row, COL_VALOR_V, QTableWidgetItem(str(leitura.get("valor_v", ""))))
 
-        foto_item = QTableWidgetItem("")
-        foto_item.setFlags(foto_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        foto_item.setCheckState(
-            Qt.CheckState.Checked if leitura.get("foto_realizada") else Qt.CheckState.Unchecked
-        )
-        self.table.setItem(row, COL_FOTO, foto_item)
-
         codigo = leitura.get("codigo", "")
         self.table.setItem(row, COL_CODIGO, QTableWidgetItem(str(codigo) if codigo != "" else ""))
         legenda_item = QTableWidgetItem(leitura.get("legenda", ""))
@@ -257,13 +259,11 @@ class EnergyRegistryView(QWidget):
         combo = self.table.cellWidget(row, COL_ENSAIO)
         item = lambda col: self.table.item(row, col)
         text = lambda col: item(col).text() if item(col) else ""
-        foto_item = item(COL_FOTO)
         return {
             "standard_code": combo.currentData() if combo else "",
             "metrologista": text(COL_METROLOGISTA),
             "tensao_label": text(COL_TENSAO_LABEL),
             "valor_v": text(COL_VALOR_V),
-            "foto_realizada": bool(foto_item and foto_item.checkState() == Qt.CheckState.Checked),
             "codigo": text(COL_CODIGO),
             "legenda": text(COL_LEGENDA),
             "data_inicial": text(COL_DATA_INI),
@@ -290,7 +290,6 @@ class EnergyRegistryView(QWidget):
                 "metrologista": base["metrologista"],
                 "tensao_label": base["tensao_label"],
                 "valor_v": base["valor_v"],
-                "foto_realizada": base["foto_realizada"],
             }
         )
 
@@ -299,7 +298,9 @@ class EnergyRegistryView(QWidget):
         formas: normal (uma linha por código aplicável do Cadastro — cobre 'dados
         via Display', onde os códigos aplicáveis são os que o display mostra) ou
         'modo relógio' (uma única leitura, colocada só no final do ensaio, com a
-        duração total do ensaio em segundos)."""
+        duração total do ensaio em segundos). Data Inicial/Final são as mesmas pra
+        todos os códigos gerados juntos (é assim que se lê no display: tudo no
+        mesmo momento)."""
         if self.current_project_id is None:
             QMessageBox.warning(self, "Gerar leituras", "Selecione um projeto antes de gerar leituras.")
             return
@@ -313,7 +314,8 @@ class EnergyRegistryView(QWidget):
             "metrologista": self.gen_metrologista_edit.text().strip(),
             "tensao_label": tensao_label,
             "valor_v": self.gen_valor_edit.text().strip(),
-            "foto_realizada": self.gen_foto_checkbox.isChecked(),
+            "data_inicial": self.gen_data_inicial_edit.text().strip(),
+            "data_final": self.gen_data_final_edit.text().strip(),
         }
 
         if self.gen_clock_mode_checkbox.isChecked():
@@ -412,9 +414,6 @@ class EnergyRegistryView(QWidget):
         self.table.blockSignals(True)
         self.table.removeRow(row)
         self.table.insertRow(new_row)
-        self.table.blockSignals(False)
-        # reconstrói a linha na nova posição (mais simples que mover widgets/itens um a um)
-        self.table.blockSignals(True)
         combo = QComboBox()
         for code in self._combo_codes(data["standard_code"]):
             combo.addItem(code, code)
@@ -425,12 +424,6 @@ class EnergyRegistryView(QWidget):
         self.table.setItem(new_row, COL_METROLOGISTA, QTableWidgetItem(data["metrologista"]))
         self.table.setItem(new_row, COL_TENSAO_LABEL, QTableWidgetItem(data["tensao_label"]))
         self.table.setItem(new_row, COL_VALOR_V, QTableWidgetItem(str(data["valor_v"])))
-        foto_item = QTableWidgetItem("")
-        foto_item.setFlags(foto_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        foto_item.setCheckState(
-            Qt.CheckState.Checked if data["foto_realizada"] else Qt.CheckState.Unchecked
-        )
-        self.table.setItem(new_row, COL_FOTO, foto_item)
         self.table.setItem(new_row, COL_CODIGO, QTableWidgetItem(str(data["codigo"])))
         legenda_item = QTableWidgetItem(data["legenda"])
         legenda_item.setFlags(legenda_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -460,11 +453,94 @@ class EnergyRegistryView(QWidget):
         legenda_item.setText(legenda)
         self.table.blockSignals(False)
 
+    # ---- encadear ensaios (registro final de um vira o inicial do outro) ----
+
+    def _open_chain_dialog(self) -> None:
+        blocks = sorted(
+            {(self._row_to_dict(r)["standard_code"], self._row_to_dict(r)["tensao_label"])
+             for r in range(self.table.rowCount())}
+        )
+        blocks = [b for b in blocks if b[0] and b[1]]
+        if len(blocks) < 2:
+            QMessageBox.warning(
+                self,
+                "Encadear ensaios",
+                "Precisa ter pelo menos 2 blocos (ensaio + tensão) com leituras geradas.",
+            )
+            return
+        dialog = _ChainReadingsDialog(self, blocks)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        from_key, to_key = dialog.selection()
+        if from_key == to_key:
+            QMessageBox.warning(self, "Encadear ensaios", "Escolha dois blocos diferentes.")
+            return
+        self._chain_blocks(from_key, to_key)
+
+    def _chain_blocks(self, from_key: tuple[str, str], to_key: tuple[str, str]) -> None:
+        source_map = {}
+        for r in range(self.table.rowCount()):
+            d = self._row_to_dict(r)
+            if (d["standard_code"], d["tensao_label"]) == from_key and d["codigo"]:
+                source_map[d["codigo"]] = (d["data_final"], d["registro_final"])
+
+        applied = 0
+        self.table.blockSignals(True)
+        for r in range(self.table.rowCount()):
+            d = self._row_to_dict(r)
+            if (d["standard_code"], d["tensao_label"]) == to_key and d["codigo"] in source_map:
+                data_final, registro_final = source_map[d["codigo"]]
+                self.table.item(r, COL_DATA_INI).setText(data_final)
+                self.table.item(r, COL_REG_INI).setText(registro_final)
+                applied += 1
+        self.table.blockSignals(False)
+        QMessageBox.information(
+            self, "Encadear ensaios", f"{applied} leitura(s) atualizada(s) por código correspondente."
+        )
+
     # ---- catálogo de códigos ----
 
     def _open_code_manager(self) -> None:
         dialog = _CodeManagerDialog(self)
         dialog.exec()
+
+
+class _ChainReadingsDialog(QDialog):
+    """Escolhe dois blocos (ensaio+tensão) já com leituras geradas: o Registro
+    Final de cada código do primeiro vira o Registro Inicial do mesmo código no
+    segundo — pra quando um ensaio foi feito logo em seguida do outro sem
+    resetar o medidor. É sempre uma escolha manual do operador, não uma dedução
+    automática do app."""
+
+    def __init__(self, parent, blocks: list[tuple[str, str]]):
+        super().__init__(parent)
+        self.setWindowTitle("Encadear ensaios")
+        self.resize(420, 200)
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(
+                "Escolha o ensaio/tensão que TERMINOU e o que COMEÇOU em seguida, sem "
+                "resetar o medidor entre um e outro."
+            )
+        )
+        form = QFormLayout()
+        self.from_combo = QComboBox()
+        self.to_combo = QComboBox()
+        for code, label in blocks:
+            text = f"{code} — {label}"
+            self.from_combo.addItem(text, (code, label))
+            self.to_combo.addItem(text, (code, label))
+        form.addRow("Ensaio que terminou:", self.from_combo)
+        form.addRow("Ensaio que começou depois:", self.to_combo)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selection(self) -> tuple[tuple[str, str], tuple[str, str]]:
+        return self.from_combo.currentData(), self.to_combo.currentData()
 
 
 class _CodeManagerDialog(QDialog):

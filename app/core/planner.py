@@ -114,6 +114,13 @@ def set_project_standards(
                 cur.execute("DELETE FROM test_items WHERE id = ?", (item["id"],))
 
 
+def delete_project(project_id: int) -> None:
+    """Apaga o projeto e tudo que depende dele (itens de checklist, sessões,
+    eventos, laudos, registro de energia) via ON DELETE CASCADE do schema."""
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
+
 def list_projects() -> list[dict]:
     with db_cursor() as cur:
         cur.execute("SELECT * FROM projects ORDER BY created_at DESC")

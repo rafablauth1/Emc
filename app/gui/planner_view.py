@@ -209,6 +209,9 @@ class PlannerView(QWidget):
         edit_cadastro_btn = QPushButton("Editar cadastro")
         edit_cadastro_btn.clicked.connect(self._edit_cadastro)
         top_bar.addWidget(edit_cadastro_btn)
+        delete_project_btn = QPushButton("Excluir projeto")
+        delete_project_btn.clicked.connect(self._delete_project)
+        top_bar.addWidget(delete_project_btn)
         layout.addLayout(top_bar)
 
         cadastro_box = QGroupBox("Cadastro")
@@ -231,20 +234,24 @@ class PlannerView(QWidget):
         )
         self.checklist_table.setAlternatingRowColors(True)
         checklist_layout.addWidget(self.checklist_table)
-        layout.addWidget(checklist_box, 2)
+        layout.addWidget(checklist_box, 1)
 
-        schedule_box = QGroupBox("Cronograma (todos os projetos)")
+        schedule_box = QGroupBox("Cronograma (todos os projetos) — editável")
         schedule_layout = QVBoxLayout(schedule_box)
-        self.schedule_table = QTableWidget(0, 5)
+        self.schedule_table = QTableWidget(0, 6)
         self.schedule_table.setHorizontalHeaderLabels(
-            ["Data", "Projeto", "Norma", "Linha", "Status"]
+            ["Data", "Projeto", "Norma", "Linha", "Status", ""]
+        )
+        self.schedule_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
         )
         self.schedule_table.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch
         )
         self.schedule_table.setAlternatingRowColors(True)
+        self.schedule_table.verticalHeader().setDefaultSectionSize(32)
         schedule_layout.addWidget(self.schedule_table)
-        layout.addWidget(schedule_box, 1)
+        layout.addWidget(schedule_box, 3)
 
         self.refresh_projects()
         self.refresh_schedule()
@@ -378,23 +385,70 @@ class PlannerView(QWidget):
         if self.current_project_id is not None:
             self.run_test_requested.emit(self.current_project_id, standard_code)
 
+    def _delete_project(self) -> None:
+        if self.current_project_id is None:
+            QMessageBox.warning(self, "Excluir projeto", "Selecione um projeto primeiro.")
+            return
+        project = planner.get_project(self.current_project_id)
+        name = project["name"] if project else ""
+        confirm = QMessageBox.question(
+            self,
+            "Excluir projeto",
+            f"Excluir o projeto '{name}'? Isso apaga também o checklist, ensaios executados, "
+            "laudos e registro de energia desse projeto — não pode ser desfeito.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        planner.delete_project(self.current_project_id)
+        self.current_project_id = None
+        self.refresh_projects()
+        self.refresh_schedule()
+
     def _on_status_changed(self, item_id: int, combo: QComboBox) -> None:
         planner.update_item_status(item_id, combo.currentData())
+        self._load_checklist()
         self.refresh_schedule()
 
     def _on_date_changed(self, item_id: int, date: QDate) -> None:
         value = None if date == QDate(2000, 1, 1) else date.toString("yyyy-MM-dd")
         planner.update_item_schedule(item_id, value)
+        self._load_checklist()
+        self.refresh_schedule()
+
+    def _remove_from_schedule(self, item_id: int) -> None:
+        planner.update_item_schedule(item_id, None)
+        self._load_checklist()
         self.refresh_schedule()
 
     def refresh_schedule(self) -> None:
         items = planner.list_scheduled_items()
         self.schedule_table.setRowCount(len(items))
         for row, item in enumerate(items):
-            self.schedule_table.setItem(row, 0, QTableWidgetItem(item["scheduled_date"]))
+            item_id = item["id"]
             self.schedule_table.setItem(row, 1, QTableWidgetItem(item["project_name"]))
             self.schedule_table.setItem(row, 2, QTableWidgetItem(item["standard_code"]))
             self.schedule_table.setItem(row, 3, QTableWidgetItem(item["porta"]))
-            self.schedule_table.setItem(
-                row, 4, QTableWidgetItem(STATUS_LABELS.get(item["status"], item["status"]))
+
+            date_edit = QDateEdit()
+            date_edit.setCalendarPopup(True)
+            date_edit.setDisplayFormat("yyyy-MM-dd")
+            date_edit.setSpecialValueText(" ")
+            date_edit.setMinimumDate(QDate(2000, 1, 1))
+            date_edit.setDate(QDate.fromString(item["scheduled_date"], "yyyy-MM-dd"))
+            date_edit.dateChanged.connect(
+                lambda date, iid=item_id: self._on_date_changed(iid, date)
             )
+            self.schedule_table.setCellWidget(row, 0, date_edit)
+
+            status_combo = QComboBox()
+            for status in STATUS_OPTIONS:
+                status_combo.addItem(STATUS_LABELS[status], status)
+            status_combo.setCurrentIndex(STATUS_OPTIONS.index(item["status"]))
+            status_combo.currentIndexChanged.connect(
+                lambda _i, iid=item_id, combo=status_combo: self._on_status_changed(iid, combo)
+            )
+            self.schedule_table.setCellWidget(row, 4, status_combo)
+
+            remove_btn = QPushButton("Remover do cronograma")
+            remove_btn.clicked.connect(lambda _checked=False, iid=item_id: self._remove_from_schedule(iid))
+            self.schedule_table.setCellWidget(row, 5, remove_btn)
