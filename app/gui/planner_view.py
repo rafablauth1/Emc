@@ -29,7 +29,7 @@ STATUS_LABELS = {"pendente": "Pendente", "andamento": "Em andamento", "concluido
 HEADER_FIELD_LABELS = [
     ("fabricante", "Fabricante:"),
     ("modelo", "Modelo:"),
-    ("numero", "Nº:"),
+    ("classe", "Classe:"),
     ("serie", "Série:"),
     ("tensao_nominal", "Tensão Nom. (V):"),
     ("corrente_nominal", "Corrente Nom. (A):"),

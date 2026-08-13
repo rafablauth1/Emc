@@ -10,7 +10,7 @@ from app.core.db import db_cursor
 COMM_LINE_ELIGIBLE_STANDARDS = ("4-3", "4-4", "4-6")
 
 PROJECT_HEADER_FIELDS = (
-    "fabricante", "modelo", "numero", "serie",
+    "fabricante", "modelo", "classe", "serie",
     "tensao_nominal", "corrente_nominal", "protocolo",
     "data_entrada", "previsao_saida", "origem_dados",
 )

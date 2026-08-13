@@ -25,17 +25,16 @@ from app.core import energy_registry, planner
 COL_ENSAIO = 0
 COL_METROLOGISTA = 1
 COL_TENSAO_LABEL = 2
-COL_VALOR_V = 3
-COL_CODIGO = 4
-COL_LEGENDA = 5
-COL_DATA_INI = 6
-COL_REG_INI = 7
-COL_DATA_FIM = 8
-COL_REG_FIM = 9
-COL_OBS = 10
+COL_CODIGO = 3
+COL_LEGENDA = 4
+COL_DATA_INI = 5
+COL_REG_INI = 6
+COL_DATA_FIM = 7
+COL_REG_FIM = 8
+COL_OBS = 9
 
 COLUMN_LABELS = [
-    "Ensaio", "Metrologista", "Tensão", "Valor (V)",
+    "Ensaio", "Metrologista", "Tensão",
     "Código", "Legenda", "Data Inicial", "Registro Inicial",
     "Data Final", "Registro Final", "Observações",
 ]
@@ -82,10 +81,8 @@ class EnergyRegistryView(QWidget):
         self.gen_metrologista_edit = QLineEdit()
         generator_form.addRow("Metrologista:", self.gen_metrologista_edit)
         self.gen_tensao_edit = QLineEdit()
-        self.gen_tensao_edit.setPlaceholderText("ex.: TENSÃO 1")
-        generator_form.addRow("Tensão (rótulo):", self.gen_tensao_edit)
-        self.gen_valor_edit = QLineEdit()
-        generator_form.addRow("Valor (V):", self.gen_valor_edit)
+        self.gen_tensao_edit.setPlaceholderText("ex.: 220V ou TENSÃO 1")
+        generator_form.addRow("Tensão:", self.gen_tensao_edit)
         self.gen_data_inicial_edit = QLineEdit()
         self.gen_data_inicial_edit.setPlaceholderText("mesma data pra todos os códigos gerados")
         generator_form.addRow("Data Inicial:", self.gen_data_inicial_edit)
@@ -240,7 +237,6 @@ class EnergyRegistryView(QWidget):
 
         self.table.setItem(row, COL_METROLOGISTA, QTableWidgetItem(leitura.get("metrologista", "")))
         self.table.setItem(row, COL_TENSAO_LABEL, QTableWidgetItem(leitura.get("tensao_label", "")))
-        self.table.setItem(row, COL_VALOR_V, QTableWidgetItem(str(leitura.get("valor_v", ""))))
 
         codigo = leitura.get("codigo", "")
         self.table.setItem(row, COL_CODIGO, QTableWidgetItem(str(codigo) if codigo != "" else ""))
@@ -263,7 +259,6 @@ class EnergyRegistryView(QWidget):
             "standard_code": combo.currentData() if combo else "",
             "metrologista": text(COL_METROLOGISTA),
             "tensao_label": text(COL_TENSAO_LABEL),
-            "valor_v": text(COL_VALOR_V),
             "codigo": text(COL_CODIGO),
             "legenda": text(COL_LEGENDA),
             "data_inicial": text(COL_DATA_INI),
@@ -289,7 +284,6 @@ class EnergyRegistryView(QWidget):
                 "standard_code": base["standard_code"],
                 "metrologista": base["metrologista"],
                 "tensao_label": base["tensao_label"],
-                "valor_v": base["valor_v"],
             }
         )
 
@@ -313,7 +307,6 @@ class EnergyRegistryView(QWidget):
             "standard_code": standard_code,
             "metrologista": self.gen_metrologista_edit.text().strip(),
             "tensao_label": tensao_label,
-            "valor_v": self.gen_valor_edit.text().strip(),
             "data_inicial": self.gen_data_inicial_edit.text().strip(),
             "data_final": self.gen_data_final_edit.text().strip(),
         }
@@ -423,7 +416,6 @@ class EnergyRegistryView(QWidget):
         self.table.setCellWidget(new_row, COL_ENSAIO, combo)
         self.table.setItem(new_row, COL_METROLOGISTA, QTableWidgetItem(data["metrologista"]))
         self.table.setItem(new_row, COL_TENSAO_LABEL, QTableWidgetItem(data["tensao_label"]))
-        self.table.setItem(new_row, COL_VALOR_V, QTableWidgetItem(str(data["valor_v"])))
         self.table.setItem(new_row, COL_CODIGO, QTableWidgetItem(str(data["codigo"])))
         legenda_item = QTableWidgetItem(data["legenda"])
         legenda_item.setFlags(legenda_item.flags() & ~Qt.ItemFlag.ItemIsEditable)

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS projects (
     client TEXT,
     fabricante TEXT,
     modelo TEXT,
-    numero TEXT,
+    classe TEXT,
     serie TEXT,
     tensao_nominal TEXT,
     corrente_nominal TEXT,
@@ -107,7 +107,8 @@ _COLUMN_MIGRATIONS = {
     "projects": [
         ("fabricante", "TEXT"),
         ("modelo", "TEXT"),
-        ("numero", "TEXT"),
+        ("numero", "TEXT"),  # substituída por "classe" — mantida no schema pra não quebrar bancos antigos
+        ("classe", "TEXT"),
         ("serie", "TEXT"),
         ("tensao_nominal", "TEXT"),
         ("corrente_nominal", "TEXT"),
