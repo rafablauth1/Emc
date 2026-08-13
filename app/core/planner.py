@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -11,11 +12,14 @@ COMM_LINE_ELIGIBLE_STANDARDS = ("4-3", "4-4", "4-6")
 PROJECT_HEADER_FIELDS = (
     "fabricante", "modelo", "numero", "serie",
     "tensao_nominal", "corrente_nominal", "protocolo",
-    "data_entrada", "previsao_saida",
+    "data_entrada", "previsao_saida", "origem_dados",
 )
 
 PORTA_ALIMENTACAO = "alimentação"
 PORTA_COMUNICACAO = "comunicação"
+
+ORIGEM_SOFTWARE = "software"
+ORIGEM_DISPLAY = "display"
 
 
 def create_project(
@@ -24,21 +28,25 @@ def create_project(
     standard_codes: Optional[list[str]] = None,
     header: Optional[dict] = None,
     comm_line_standards: Optional[list[str]] = None,
+    applicable_codes: Optional[list[int]] = None,
 ) -> int:
     """standard_codes: quais ensaios (4-2, 4-3, ...) se aplicam a este projeto —
     por padrão, todos os cobertos pela norma (STANDARDS). comm_line_standards:
     dentre COMM_LINE_ELIGIBLE_STANDARDS, quais também têm linha de comunicação
-    a testar separadamente (cria um segundo item de checklist para esse ensaio)."""
+    a testar separadamente (cria um segundo item de checklist para esse ensaio).
+    applicable_codes: códigos de grandeza do catálogo que esse medidor específico
+    tem (ex.: os que aparecem no display) — usado pra gerar leituras automaticamente."""
     created_at = datetime.now(timezone.utc).isoformat()
     codes = standard_codes if standard_codes is not None else list(STANDARDS)
     header = header or {}
     comm_line_standards = comm_line_standards or []
     header_values = [header.get(field, "") for field in PROJECT_HEADER_FIELDS]
+    codigos_json = json.dumps(applicable_codes or [])
     with db_cursor() as cur:
         cur.execute(
-            f"""INSERT INTO projects (name, client, {', '.join(PROJECT_HEADER_FIELDS)}, created_at)
-                VALUES (?, ?, {', '.join('?' for _ in PROJECT_HEADER_FIELDS)}, ?)""",
-            (name, client, *header_values, created_at),
+            f"""INSERT INTO projects (name, client, {', '.join(PROJECT_HEADER_FIELDS)}, codigos_json, created_at)
+                VALUES (?, ?, {', '.join('?' for _ in PROJECT_HEADER_FIELDS)}, ?, ?)""",
+            (name, client, *header_values, codigos_json, created_at),
         )
         project_id = cur.lastrowid
         for standard_code in codes:
@@ -54,15 +62,29 @@ def create_project(
     return project_id
 
 
-def update_project(project_id: int, name: str, client: str, header: dict) -> None:
+def update_project(
+    project_id: int, name: str, client: str, header: dict, applicable_codes: Optional[list[int]] = None
+) -> None:
     header_values = [header.get(field, "") for field in PROJECT_HEADER_FIELDS]
+    codigos_json = json.dumps(applicable_codes if applicable_codes is not None else get_applicable_codes(project_id))
     with db_cursor() as cur:
         cur.execute(
             f"""UPDATE projects SET name = ?, client = ?,
-                {', '.join(f'{f} = ?' for f in PROJECT_HEADER_FIELDS)}
+                {', '.join(f'{f} = ?' for f in PROJECT_HEADER_FIELDS)},
+                codigos_json = ?
                 WHERE id = ?""",
-            (name, client, *header_values, project_id),
+            (name, client, *header_values, codigos_json, project_id),
         )
+
+
+def get_applicable_codes(project_id: int) -> list[int]:
+    project = get_project(project_id)
+    if not project or not project.get("codigos_json"):
+        return []
+    try:
+        return json.loads(project["codigos_json"])
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 def set_project_standards(

@@ -1,13 +1,16 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -73,6 +76,26 @@ class EnergyRegistryView(QWidget):
             )
         )
 
+        generator_box = QGroupBox("Gerar leituras (ensaio + tensão)")
+        generator_form = QFormLayout(generator_box)
+        self.gen_ensaio_combo = QComboBox()
+        generator_form.addRow("Ensaio:", self.gen_ensaio_combo)
+        self.gen_metrologista_edit = QLineEdit()
+        generator_form.addRow("Metrologista:", self.gen_metrologista_edit)
+        self.gen_tensao_edit = QLineEdit()
+        self.gen_tensao_edit.setPlaceholderText("ex.: TENSÃO 1")
+        generator_form.addRow("Tensão (rótulo):", self.gen_tensao_edit)
+        self.gen_valor_edit = QLineEdit()
+        generator_form.addRow("Valor (V):", self.gen_valor_edit)
+        self.gen_foto_checkbox = QCheckBox("Foto realizada")
+        generator_form.addRow("", self.gen_foto_checkbox)
+        gen_btn_row = QHBoxLayout()
+        gen_btn = QPushButton("Gerar leituras (códigos do cadastro)")
+        gen_btn.clicked.connect(self._generate_readings)
+        gen_btn_row.addWidget(gen_btn)
+        generator_form.addRow("", gen_btn_row)
+        layout.addWidget(generator_box)
+
         layout.addWidget(
             QLabel(
                 "Leituras — uma linha por código de grandeza registrado em cada tensão de "
@@ -104,6 +127,9 @@ class EnergyRegistryView(QWidget):
         down_btn = QPushButton("▼ Mover para baixo")
         down_btn.clicked.connect(lambda: self._move_row(1))
         btn_row.addWidget(down_btn)
+        sort_btn = QPushButton("Ordenar por consumo de energia")
+        sort_btn.clicked.connect(self._sort_by_consumption)
+        btn_row.addWidget(sort_btn)
         layout.addLayout(btn_row)
 
         save_row = QHBoxLayout()
@@ -154,6 +180,10 @@ class EnergyRegistryView(QWidget):
         project_codes = {item["standard_code"] for item in planner.list_test_items(self.current_project_id)}
         # ordena pela ordem natural de STANDARDS (4-2..4-19), não pela ordem alfabética do banco
         self._project_standard_codes = [code for code in STANDARDS if code in project_codes] or list(STANDARDS)
+
+        self.gen_ensaio_combo.clear()
+        for code in self._project_standard_codes:
+            self.gen_ensaio_combo.addItem(f"{code} — {STANDARDS.get(code, '')}", code)
 
         leituras = energy_registry.get_leituras(self.current_project_id)
         self.table.blockSignals(True)
@@ -259,6 +289,71 @@ class EnergyRegistryView(QWidget):
                 "foto_realizada": base["foto_realizada"],
             }
         )
+
+    def _generate_readings(self) -> None:
+        """Gera uma linha por código aplicável (definido no Cadastro) para o
+        ensaio/tensão escolhidos acima — em vez de adicionar código por código
+        na mão. Cobre 'dados via Display': os códigos aplicáveis são os que o
+        display do medidor mostra, cadastrados uma vez só."""
+        if self.current_project_id is None:
+            QMessageBox.warning(self, "Gerar leituras", "Selecione um projeto antes de gerar leituras.")
+            return
+        standard_code = self.gen_ensaio_combo.currentData()
+        if not standard_code:
+            QMessageBox.warning(self, "Gerar leituras", "Este projeto não tem ensaios cadastrados.")
+            return
+        codes = planner.get_applicable_codes(self.current_project_id)
+        if not codes:
+            QMessageBox.warning(
+                self,
+                "Gerar leituras",
+                "Nenhum código aplicável cadastrado para este projeto ainda. "
+                "Defina em Planner > Editar cadastro > Códigos aplicáveis.",
+            )
+            return
+        tensao_label = self.gen_tensao_edit.text().strip() or "TENSÃO 1"
+        base = {
+            "standard_code": standard_code,
+            "metrologista": self.gen_metrologista_edit.text().strip(),
+            "tensao_label": tensao_label,
+            "valor_v": self.gen_valor_edit.text().strip(),
+            "foto_realizada": self.gen_foto_checkbox.isChecked(),
+        }
+        for codigo in codes:
+            self._append_row({**base, "codigo": str(codigo), "legenda": energy_registry.get_legend(codigo)})
+
+    def _sort_by_consumption(self) -> None:
+        """Reordena os blocos (mesmo ensaio + mesma tensão) do menor pro maior
+        consumo total registrado (Registro Final − Registro Inicial), preservando
+        a ordem das linhas dentro de cada bloco — equivalente à macro
+        OrdenarPorEnsaio da planilha original."""
+        rows = [self._row_to_dict(r) for r in range(self.table.rowCount())]
+        if len(rows) < 2:
+            return
+
+        def consumo(row: dict) -> float:
+            try:
+                return float(row["registro_final"]) - float(row["registro_inicial"])
+            except (ValueError, TypeError):
+                return 0.0
+
+        groups: dict[tuple[str, str], list[dict]] = {}
+        order: list[tuple[str, str]] = []
+        for row in rows:
+            key = (row["standard_code"], row["tensao_label"])
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(row)
+
+        order.sort(key=lambda key: sum(consumo(r) for r in groups[key]))
+
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        for key in order:
+            for row in groups[key]:
+                self._append_row(row)
+        self.table.blockSignals(False)
 
     def _add_new_voltage(self) -> None:
         """Novo bloco de tensão dentro do mesmo ensaio da linha selecionada

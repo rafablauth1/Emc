@@ -1,4 +1,4 @@
-from PySide6.QtCore import QDate, Signal
+from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,8 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import AUTOMATED_STANDARDS, STANDARDS
-from app.core import planner
-from app.core.planner import COMM_LINE_ELIGIBLE_STANDARDS, PROJECT_HEADER_FIELDS
+from app.core import energy_registry, planner
+from app.core.planner import COMM_LINE_ELIGIBLE_STANDARDS, ORIGEM_DISPLAY, ORIGEM_SOFTWARE
 
 STATUS_OPTIONS = ["pendente", "andamento", "concluido"]
 STATUS_LABELS = {"pendente": "Pendente", "andamento": "Em andamento", "concluido": "Concluído"}
@@ -37,6 +37,61 @@ HEADER_FIELD_LABELS = [
     ("data_entrada", "Data de Entrada:"),
     ("previsao_saida", "Previsão de Saída:"),
 ]
+
+
+class _CodeSelectionDialog(QDialog):
+    """Escolher, dentre o catálogo de códigos de grandeza, quais esse medidor
+    específico tem (ex.: os que aparecem no display) — usado depois em Registro
+    de Energia pra gerar as linhas de leitura automaticamente."""
+
+    def __init__(self, parent=None, selected: list[int] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Códigos aplicáveis a este medidor")
+        self.resize(480, 520)
+        selected_set = set(selected or [])
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Marque os códigos que esse medidor tem/mostra:"))
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["", "Código", "Legenda"])
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table, 1)
+        for entry in energy_registry.list_codes():
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            check_item = QTableWidgetItem()
+            check_item.setFlags(check_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            check_item.setCheckState(
+                Qt.CheckState.Checked if entry["codigo"] in selected_set else Qt.CheckState.Unchecked
+            )
+            self.table.setItem(row, 0, check_item)
+            self.table.setItem(row, 1, QTableWidgetItem(str(entry["codigo"])))
+            self.table.setItem(row, 2, QTableWidgetItem(entry["legenda"]))
+
+        btn_row = QHBoxLayout()
+        all_btn = QPushButton("Marcar todos")
+        all_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Checked))
+        btn_row.addWidget(all_btn)
+        none_btn = QPushButton("Desmarcar todos")
+        none_btn.clicked.connect(lambda: self._set_all(Qt.CheckState.Unchecked))
+        btn_row.addWidget(none_btn)
+        layout.addLayout(btn_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _set_all(self, state: Qt.CheckState) -> None:
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 0).setCheckState(state)
+
+    def selected_codes(self) -> list[int]:
+        codes = []
+        for row in range(self.table.rowCount()):
+            if self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
+                codes.append(int(self.table.item(row, 1).text()))
+        return codes
 
 
 class _CadastroDialog(QDialog):
@@ -61,7 +116,26 @@ class _CadastroDialog(QDialog):
             edit = QLineEdit((project or {}).get(field, "") or "")
             form.addRow(label, edit)
             self.header_edits[field] = edit
+
+        self.origem_combo = QComboBox()
+        self.origem_combo.addItem("Display (leitura manual no mostrador)", ORIGEM_DISPLAY)
+        self.origem_combo.addItem("Software (leitura via comunicação)", ORIGEM_SOFTWARE)
+        origem_atual = (project or {}).get("origem_dados") or ORIGEM_DISPLAY
+        index = self.origem_combo.findData(origem_atual)
+        if index >= 0:
+            self.origem_combo.setCurrentIndex(index)
+        form.addRow("Dados via:", self.origem_combo)
         layout.addLayout(form)
+
+        self._applicable_codes = planner.get_applicable_codes(project["id"]) if project else []
+        codes_row = QHBoxLayout()
+        self.codes_summary_label = QLabel()
+        self._refresh_codes_summary()
+        codes_row.addWidget(self.codes_summary_label, 1)
+        codes_btn = QPushButton("Códigos aplicáveis...")
+        codes_btn.clicked.connect(self._select_codes)
+        codes_row.addWidget(codes_btn)
+        layout.addLayout(codes_row)
 
         existing_keys = {(item["standard_code"], item["porta"]) for item in (existing_items or [])}
         is_new = project is None
@@ -88,8 +162,25 @@ class _CadastroDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _refresh_codes_summary(self) -> None:
+        n = len(self._applicable_codes)
+        self.codes_summary_label.setText(
+            f"{n} código(s) aplicável(is) selecionado(s)." if n else "Nenhum código selecionado ainda."
+        )
+
+    def _select_codes(self) -> None:
+        dialog = _CodeSelectionDialog(self, selected=self._applicable_codes)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._applicable_codes = dialog.selected_codes()
+            self._refresh_codes_summary()
+
     def header_values(self) -> dict:
-        return {field: edit.text().strip() for field, edit in self.header_edits.items()}
+        values = {field: edit.text().strip() for field, edit in self.header_edits.items()}
+        values["origem_dados"] = self.origem_combo.currentData()
+        return values
+
+    def applicable_codes(self) -> list[int]:
+        return list(self._applicable_codes)
 
     def selected_standards(self) -> list[str]:
         return [code for code, checkbox in self.checkboxes.items() if checkbox.isChecked()]
@@ -192,6 +283,7 @@ class PlannerView(QWidget):
             dialog.selected_standards(),
             dialog.header_values(),
             dialog.selected_comm_line_standards(),
+            dialog.applicable_codes(),
         )
         self.refresh_projects(select_project_id=project_id)
         self.refresh_schedule()
@@ -209,7 +301,11 @@ class PlannerView(QWidget):
         if not name:
             return
         planner.update_project(
-            self.current_project_id, name, dialog.client_edit.text().strip(), dialog.header_values()
+            self.current_project_id,
+            name,
+            dialog.client_edit.text().strip(),
+            dialog.header_values(),
+            dialog.applicable_codes(),
         )
         planner.set_project_standards(
             self.current_project_id, dialog.selected_standards(), dialog.selected_comm_line_standards()

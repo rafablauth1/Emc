@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS projects (
     protocolo TEXT,
     data_entrada TEXT,
     previsao_saida TEXT,
+    origem_dados TEXT,
+    codigos_json TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -112,6 +114,8 @@ _COLUMN_MIGRATIONS = {
         ("protocolo", "TEXT"),
         ("data_entrada", "TEXT"),
         ("previsao_saida", "TEXT"),
+        ("origem_dados", "TEXT"),
+        ("codigos_json", "TEXT"),
     ],
     "test_items": [
         ("porta", "TEXT NOT NULL DEFAULT 'alimentação'"),
