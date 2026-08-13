@@ -90,14 +90,9 @@ class EnergyRegistryView(QWidget):
         self.gen_foto_checkbox = QCheckBox("Foto realizada")
         generator_form.addRow("", self.gen_foto_checkbox)
         self.gen_clock_mode_checkbox = QCheckBox(
-            "Modo relógio (10 medidas de tempo, igualmente espaçadas)"
+            "Modo relógio (1 leitura só, com a duração total do ensaio)"
         )
-        self.gen_clock_mode_checkbox.toggled.connect(self._toggle_clock_mode)
         generator_form.addRow("", self.gen_clock_mode_checkbox)
-        self.gen_total_time_edit = QLineEdit()
-        self.gen_total_time_edit.setPlaceholderText("tempo total do ensaio, em segundos")
-        self.gen_total_time_edit.setEnabled(False)
-        generator_form.addRow("Tempo total do ensaio (s):", self.gen_total_time_edit)
         gen_btn_row = QHBoxLayout()
         gen_btn = QPushButton("Gerar leituras (códigos do cadastro)")
         gen_btn.clicked.connect(self._generate_readings)
@@ -299,16 +294,12 @@ class EnergyRegistryView(QWidget):
             }
         )
 
-    def _toggle_clock_mode(self, checked: bool) -> None:
-        self.gen_total_time_edit.setEnabled(checked)
-
     def _generate_readings(self) -> None:
         """Gera as linhas de leitura pro ensaio/tensão escolhidos acima, de duas
         formas: normal (uma linha por código aplicável do Cadastro — cobre 'dados
         via Display', onde os códigos aplicáveis são os que o display mostra) ou
-        'modo relógio' (10 medidas de tempo igualmente espaçadas ao longo da
-        duração total do ensaio, pra verificar se o relógio do medidor não atrasa/
-        adianta durante o distúrbio)."""
+        'modo relógio' (uma única leitura, colocada só no final do ensaio, com a
+        duração total do ensaio em segundos)."""
         if self.current_project_id is None:
             QMessageBox.warning(self, "Gerar leituras", "Selecione um projeto antes de gerar leituras.")
             return
@@ -326,24 +317,14 @@ class EnergyRegistryView(QWidget):
         }
 
         if self.gen_clock_mode_checkbox.isChecked():
-            try:
-                total_s = float(self.gen_total_time_edit.text().strip())
-            except ValueError:
-                QMessageBox.warning(
-                    self, "Modo relógio", "Informe o tempo total do ensaio em segundos (número)."
-                )
-                return
-            interval = total_s / 9 if total_s > 0 else 0
-            for i in range(10):
-                t = i * interval
-                self._append_row(
-                    {
-                        **base,
-                        "codigo": "2",
-                        "legenda": energy_registry.get_legend(2),
-                        "observacoes": f"Modo relógio — ponto {i + 1}/10, tempo alvo {t:.1f}s (total {total_s:.0f}s)",
-                    }
-                )
+            self._append_row(
+                {
+                    **base,
+                    "codigo": "",
+                    "legenda": "Duração total do ensaio (s) — modo relógio",
+                    "observacoes": "Preencher Registro Final com o tempo total do ensaio, em segundos.",
+                }
+            )
             return
 
         codes = planner.get_applicable_codes(self.current_project_id)
