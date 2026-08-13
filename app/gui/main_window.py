@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QMainWindow, QTabWidget
 
+from app.gui.energy_registry_view import EnergyRegistryView
 from app.gui.execution_view import ExecutionView
 from app.gui.planner_view import PlannerView
 from app.gui.reports_view import ReportsView
@@ -14,6 +15,7 @@ class MainWindow(QMainWindow):
 
         self.planner_view = PlannerView()
         self.execution_view = ExecutionView()
+        self.energy_registry_view = EnergyRegistryView()
         self.reports_view = ReportsView()
         self.settings_view = SettingsView()
 
@@ -22,6 +24,7 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self.planner_view, "Planner")
         tabs.addTab(self.execution_view, "Execução")
+        tabs.addTab(self.energy_registry_view, "Registro de Energia")
         tabs.addTab(self.reports_view, "Relatórios")
         tabs.addTab(self.settings_view, "Configurações")
         tabs.currentChanged.connect(self._on_tab_changed)
@@ -36,6 +39,8 @@ class MainWindow(QMainWindow):
         widget = self.tabs.widget(index)
         if widget is self.execution_view:
             self.execution_view.refresh_projects()
+        elif widget is self.energy_registry_view:
+            self.energy_registry_view.refresh_projects()
         elif widget is self.reports_view:
             self.reports_view.refresh()
         elif widget is self.planner_view:

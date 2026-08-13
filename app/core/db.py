@@ -57,6 +57,27 @@ CREATE TABLE IF NOT EXISTS templates (
     params_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS energy_registries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    fabricante TEXT,
+    modelo TEXT,
+    numero TEXT,
+    serie TEXT,
+    tensao_nominal TEXT,
+    corrente_nominal TEXT,
+    protocolo TEXT,
+    data_entrada TEXT,
+    previsao_saida TEXT,
+    data_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS energy_codes (
+    codigo INTEGER PRIMARY KEY,
+    legenda TEXT NOT NULL
+);
 """
 
 
@@ -74,9 +95,11 @@ def init_db() -> None:
         conn.commit()
     finally:
         conn.close()
+    from app.core.energy_registry import seed_energy_codes
     from app.core.seed_data import seed_default_templates
 
     seed_default_templates()
+    seed_energy_codes()
 
 
 @contextmanager
