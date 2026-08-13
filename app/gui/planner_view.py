@@ -1,11 +1,15 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDateEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -19,6 +23,40 @@ from app.core import planner
 
 STATUS_OPTIONS = ["pendente", "andamento", "concluido"]
 STATUS_LABELS = {"pendente": "Pendente", "andamento": "Em andamento", "concluido": "Concluído"}
+
+
+class _NewProjectDialog(QDialog):
+    """Nome/cliente + quais ensaios (4-2 a 4-19) se aplicam a este projeto —
+    todos vêm marcados por padrão, desmarque os que não fizerem sentido."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Novo projeto")
+        self.resize(420, 380)
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.name_edit = QLineEdit()
+        form.addRow("Nome do projeto:", self.name_edit)
+        self.client_edit = QLineEdit()
+        form.addRow("Cliente (opcional):", self.client_edit)
+        layout.addLayout(form)
+
+        layout.addWidget(QLabel("Ensaios que se aplicam a este projeto:"))
+        self.checkboxes: dict[str, QCheckBox] = {}
+        for code, description in STANDARDS.items():
+            checkbox = QCheckBox(f"{code} — {description}")
+            checkbox.setChecked(True)
+            layout.addWidget(checkbox)
+            self.checkboxes[code] = checkbox
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_standards(self) -> list[str]:
+        return [code for code, checkbox in self.checkboxes.items() if checkbox.isChecked()]
 
 
 class PlannerView(QWidget):
@@ -80,11 +118,15 @@ class PlannerView(QWidget):
             self._on_project_selected(0)
 
     def _create_project(self) -> None:
-        name, ok = QInputDialog.getText(self, "Novo projeto", "Nome do projeto:")
-        if not ok or not name.strip():
+        dialog = _NewProjectDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        client, _ = QInputDialog.getText(self, "Novo projeto", "Cliente (opcional):")
-        project_id = planner.create_project(name.strip(), client.strip())
+        name = dialog.name_edit.text().strip()
+        if not name:
+            return
+        client = dialog.client_edit.text().strip()
+        standard_codes = dialog.selected_standards()
+        project_id = planner.create_project(name, client, standard_codes)
         self.refresh_projects(select_project_id=project_id)
         self.refresh_schedule()
 
@@ -98,6 +140,9 @@ class PlannerView(QWidget):
         if self.current_project_id is None:
             return
         items = planner.list_test_items(self.current_project_id)
+        # ordena pela ordem natural de STANDARDS (4-2..4-19), não pela ordem alfabética do banco
+        order = {code: i for i, code in enumerate(STANDARDS)}
+        items.sort(key=lambda item: order.get(item["standard_code"], 999))
         self.checklist_table.setRowCount(len(items))
         for row, item in enumerate(items):
             standard_code = item["standard_code"]

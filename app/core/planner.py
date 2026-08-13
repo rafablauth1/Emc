@@ -5,15 +5,18 @@ from app.config import STANDARDS
 from app.core.db import db_cursor
 
 
-def create_project(name: str, client: str = "") -> int:
+def create_project(name: str, client: str = "", standard_codes: Optional[list[str]] = None) -> int:
+    """standard_codes: quais ensaios (4-2, 4-3, ...) se aplicam a este projeto —
+    por padrão, todos os cobertos pela norma (STANDARDS)."""
     created_at = datetime.now(timezone.utc).isoformat()
+    codes = standard_codes if standard_codes is not None else list(STANDARDS)
     with db_cursor() as cur:
         cur.execute(
             "INSERT INTO projects (name, client, created_at) VALUES (?, ?, ?)",
             (name, client, created_at),
         )
         project_id = cur.lastrowid
-        for standard_code in STANDARDS:
+        for standard_code in codes:
             cur.execute(
                 "INSERT INTO test_items (project_id, standard_code, status) VALUES (?, ?, 'pendente')",
                 (project_id, standard_code),

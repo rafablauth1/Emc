@@ -60,6 +60,7 @@ class EnergyRegistryView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_project_id: int | None = None
+        self._project_standard_codes: list[str] = list(STANDARDS)
         layout = QVBoxLayout(self)
 
         top_row = QHBoxLayout()
@@ -151,6 +152,9 @@ class EnergyRegistryView(QWidget):
         self.save_status.setText("")
         if self.current_project_id is None:
             return
+        project_codes = {item["standard_code"] for item in planner.list_test_items(self.current_project_id)}
+        # ordena pela ordem natural de STANDARDS (4-2..4-19), não pela ordem alfabética do banco
+        self._project_standard_codes = [code for code in STANDARDS if code in project_codes] or list(STANDARDS)
         data = energy_registry.get_registry(self.current_project_id)
         for field, edit in self.header_edits.items():
             edit.setText(data.get(field, ""))
@@ -160,6 +164,15 @@ class EnergyRegistryView(QWidget):
         for leitura in data["leituras"]:
             self._append_row(leitura)
         self.table.blockSignals(False)
+
+    def _combo_codes(self, current: str = "") -> list[str]:
+        """Ensaios do projeto atual (só os que foram marcados na criação do
+        projeto); inclui o código da leitura mesmo que não esteja mais na
+        lista do projeto, pra não perder/esconder dado já gravado."""
+        codes = list(self._project_standard_codes)
+        if current and current not in codes:
+            codes.append(current)
+        return codes
 
     def _save(self) -> None:
         if self.current_project_id is None:
@@ -179,7 +192,7 @@ class EnergyRegistryView(QWidget):
         self.table.insertRow(row)
 
         combo = QComboBox()
-        for code in STANDARDS:
+        for code in self._combo_codes(leitura.get("standard_code", "")):
             combo.addItem(code, code)
         index = combo.findData(leitura.get("standard_code", ""))
         if index >= 0:
@@ -295,7 +308,7 @@ class EnergyRegistryView(QWidget):
         # reconstrói a linha na nova posição (mais simples que mover widgets/itens um a um)
         self.table.blockSignals(True)
         combo = QComboBox()
-        for code in STANDARDS:
+        for code in self._combo_codes(data["standard_code"]):
             combo.addItem(code, code)
         index = combo.findData(data["standard_code"])
         if index >= 0:
