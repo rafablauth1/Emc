@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -39,18 +38,6 @@ COLUMN_LABELS = [
     "Data Final", "Registro Final", "Observações",
 ]
 
-HEADER_FIELD_LABELS = [
-    ("fabricante", "Fabricante:"),
-    ("modelo", "Modelo:"),
-    ("numero", "Nº:"),
-    ("serie", "Série:"),
-    ("tensao_nominal", "Tensão Nom. (V):"),
-    ("corrente_nominal", "Corrente Nom. (A):"),
-    ("protocolo", "Protocolo:"),
-    ("data_entrada", "Data de Entrada:"),
-    ("previsao_saida", "Previsão de Saída:"),
-]
-
 
 class EnergyRegistryView(QWidget):
     """Registro de leituras de energia por ensaio/tensão — equivalente à
@@ -73,13 +60,18 @@ class EnergyRegistryView(QWidget):
         top_row.addWidget(manage_codes_btn)
         layout.addLayout(top_row)
 
-        header_form = QFormLayout()
-        self.header_edits: dict[str, QLineEdit] = {}
-        for field, label in HEADER_FIELD_LABELS:
-            edit = QLineEdit()
-            header_form.addRow(label, edit)
-            self.header_edits[field] = edit
-        layout.addLayout(header_form)
+        summary_form = QFormLayout()
+        self.cliente_label = QLabel("—")
+        summary_form.addRow("Cliente:", self.cliente_label)
+        self.protocolo_label = QLabel("—")
+        summary_form.addRow("Protocolo:", self.protocolo_label)
+        layout.addLayout(summary_form)
+        layout.addWidget(
+            QLabel(
+                "Identificação completa do equipamento (fabricante, modelo, série...) fica "
+                "no Cadastro, na aba Planner — aqui só cliente/protocolo pra referência."
+            )
+        )
 
         layout.addWidget(
             QLabel(
@@ -151,17 +143,22 @@ class EnergyRegistryView(QWidget):
     def _load(self) -> None:
         self.save_status.setText("")
         if self.current_project_id is None:
+            self.cliente_label.setText("—")
+            self.protocolo_label.setText("—")
+            self.table.setRowCount(0)
             return
+        project = planner.get_project(self.current_project_id) or {}
+        self.cliente_label.setText(project.get("client") or "—")
+        self.protocolo_label.setText(project.get("protocolo") or "—")
+
         project_codes = {item["standard_code"] for item in planner.list_test_items(self.current_project_id)}
         # ordena pela ordem natural de STANDARDS (4-2..4-19), não pela ordem alfabética do banco
         self._project_standard_codes = [code for code in STANDARDS if code in project_codes] or list(STANDARDS)
-        data = energy_registry.get_registry(self.current_project_id)
-        for field, edit in self.header_edits.items():
-            edit.setText(data.get(field, ""))
 
+        leituras = energy_registry.get_leituras(self.current_project_id)
         self.table.blockSignals(True)
         self.table.setRowCount(0)
-        for leitura in data["leituras"]:
+        for leitura in leituras:
             self._append_row(leitura)
         self.table.blockSignals(False)
 
@@ -178,9 +175,8 @@ class EnergyRegistryView(QWidget):
         if self.current_project_id is None:
             QMessageBox.warning(self, "Registro de energia", "Selecione um projeto antes de salvar.")
             return
-        header = {field: edit.text().strip() for field, edit in self.header_edits.items()}
         leituras = [self._row_to_dict(row) for row in range(self.table.rowCount())]
-        energy_registry.save_registry(self.current_project_id, header, leituras)
+        energy_registry.save_leituras(self.current_project_id, leituras)
         self.save_status.setStyleSheet("color: green;")
         self.save_status.setText("Salvo.")
 

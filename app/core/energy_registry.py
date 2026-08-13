@@ -111,13 +111,6 @@ ENERGY_CODES = [
     (189, "Energia reativa capacitiva reversa Posto D (kvarh)"),
 ]
 
-HEADER_FIELDS = (
-    "fabricante", "modelo", "numero", "serie",
-    "tensao_nominal", "corrente_nominal", "protocolo",
-    "data_entrada", "previsao_saida",
-)
-
-
 def seed_energy_codes() -> None:
     with db_cursor() as cur:
         cur.execute("SELECT COUNT(*) c FROM energy_codes")
@@ -149,36 +142,30 @@ def replace_codes(codes: list[tuple[int, str]]) -> None:
         cur.executemany("INSERT INTO energy_codes (codigo, legenda) VALUES (?, ?)", codes)
 
 
-def get_registry(project_id: int) -> dict:
+def get_leituras(project_id: int) -> list[dict]:
+    """As leituras de energia do projeto — identificação do equipamento (fabricante,
+    protocolo etc.) agora fica no Cadastro (app.core.planner), não aqui."""
     with db_cursor() as cur:
-        cur.execute("SELECT * FROM energy_registries WHERE project_id = ?", (project_id,))
+        cur.execute("SELECT data_json FROM energy_registries WHERE project_id = ?", (project_id,))
         row = cur.fetchone()
     if row is None:
-        return {field: "" for field in HEADER_FIELDS} | {"leituras": []}
-    result = {field: row[field] or "" for field in HEADER_FIELDS}
-    result["leituras"] = json.loads(row["data_json"]).get("leituras", [])
-    return result
+        return []
+    return json.loads(row["data_json"]).get("leituras", [])
 
 
-def save_registry(project_id: int, header: dict, leituras: list) -> None:
+def save_leituras(project_id: int, leituras: list) -> None:
     data_json = json.dumps({"leituras": leituras}, ensure_ascii=False)
     now = datetime.now(timezone.utc).isoformat()
-    values = [header.get(field, "") for field in HEADER_FIELDS]
     with db_cursor() as cur:
         cur.execute("SELECT id FROM energy_registries WHERE project_id = ?", (project_id,))
         existing = cur.fetchone()
         if existing:
             cur.execute(
-                f"""UPDATE energy_registries SET
-                    {', '.join(f'{f} = ?' for f in HEADER_FIELDS)},
-                    data_json = ?, updated_at = ?
-                    WHERE project_id = ?""",
-                (*values, data_json, now, project_id),
+                "UPDATE energy_registries SET data_json = ?, updated_at = ? WHERE project_id = ?",
+                (data_json, now, project_id),
             )
         else:
             cur.execute(
-                f"""INSERT INTO energy_registries
-                    (project_id, {', '.join(HEADER_FIELDS)}, data_json, updated_at)
-                    VALUES (?, {', '.join('?' for _ in HEADER_FIELDS)}, ?, ?)""",
-                (project_id, *values, data_json, now),
+                "INSERT INTO energy_registries (project_id, data_json, updated_at) VALUES (?, ?, ?)",
+                (project_id, data_json, now),
             )

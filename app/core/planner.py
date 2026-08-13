@@ -4,24 +4,92 @@ from typing import Optional
 from app.config import STANDARDS
 from app.core.db import db_cursor
 
+# Ensaios que costumam ter uma linha de comunicação separada da linha de
+# alimentação a testar (ex.: RS-485/óptico de um medidor de energia).
+COMM_LINE_ELIGIBLE_STANDARDS = ("4-3", "4-4", "4-6")
 
-def create_project(name: str, client: str = "", standard_codes: Optional[list[str]] = None) -> int:
+PROJECT_HEADER_FIELDS = (
+    "fabricante", "modelo", "numero", "serie",
+    "tensao_nominal", "corrente_nominal", "protocolo",
+    "data_entrada", "previsao_saida",
+)
+
+PORTA_ALIMENTACAO = "alimentação"
+PORTA_COMUNICACAO = "comunicação"
+
+
+def create_project(
+    name: str,
+    client: str = "",
+    standard_codes: Optional[list[str]] = None,
+    header: Optional[dict] = None,
+    comm_line_standards: Optional[list[str]] = None,
+) -> int:
     """standard_codes: quais ensaios (4-2, 4-3, ...) se aplicam a este projeto —
-    por padrão, todos os cobertos pela norma (STANDARDS)."""
+    por padrão, todos os cobertos pela norma (STANDARDS). comm_line_standards:
+    dentre COMM_LINE_ELIGIBLE_STANDARDS, quais também têm linha de comunicação
+    a testar separadamente (cria um segundo item de checklist para esse ensaio)."""
     created_at = datetime.now(timezone.utc).isoformat()
     codes = standard_codes if standard_codes is not None else list(STANDARDS)
+    header = header or {}
+    comm_line_standards = comm_line_standards or []
+    header_values = [header.get(field, "") for field in PROJECT_HEADER_FIELDS]
     with db_cursor() as cur:
         cur.execute(
-            "INSERT INTO projects (name, client, created_at) VALUES (?, ?, ?)",
-            (name, client, created_at),
+            f"""INSERT INTO projects (name, client, {', '.join(PROJECT_HEADER_FIELDS)}, created_at)
+                VALUES (?, ?, {', '.join('?' for _ in PROJECT_HEADER_FIELDS)}, ?)""",
+            (name, client, *header_values, created_at),
         )
         project_id = cur.lastrowid
         for standard_code in codes:
             cur.execute(
-                "INSERT INTO test_items (project_id, standard_code, status) VALUES (?, ?, 'pendente')",
-                (project_id, standard_code),
+                "INSERT INTO test_items (project_id, standard_code, porta, status) VALUES (?, ?, ?, 'pendente')",
+                (project_id, standard_code, PORTA_ALIMENTACAO),
             )
+            if standard_code in comm_line_standards and standard_code in COMM_LINE_ELIGIBLE_STANDARDS:
+                cur.execute(
+                    "INSERT INTO test_items (project_id, standard_code, porta, status) VALUES (?, ?, ?, 'pendente')",
+                    (project_id, standard_code, PORTA_COMUNICACAO),
+                )
     return project_id
+
+
+def update_project(project_id: int, name: str, client: str, header: dict) -> None:
+    header_values = [header.get(field, "") for field in PROJECT_HEADER_FIELDS]
+    with db_cursor() as cur:
+        cur.execute(
+            f"""UPDATE projects SET name = ?, client = ?,
+                {', '.join(f'{f} = ?' for f in PROJECT_HEADER_FIELDS)}
+                WHERE id = ?""",
+            (name, client, *header_values, project_id),
+        )
+
+
+def set_project_standards(
+    project_id: int, standard_codes: list[str], comm_line_standards: Optional[list[str]] = None
+) -> None:
+    """Sincroniza os itens de checklist do projeto com a seleção de ensaios (usado ao
+    editar o cadastro). Adiciona os que faltam; remove só os que ainda estão pendentes
+    e sem sessão vinculada — não apaga histórico de um ensaio já feito/agendado."""
+    comm_line_standards = comm_line_standards or []
+    desired: set[tuple[str, str]] = {(code, PORTA_ALIMENTACAO) for code in standard_codes}
+    for code in comm_line_standards:
+        if code in standard_codes and code in COMM_LINE_ELIGIBLE_STANDARDS:
+            desired.add((code, PORTA_COMUNICACAO))
+
+    existing = list_test_items(project_id)
+    existing_keys = {(item["standard_code"], item["porta"]) for item in existing}
+
+    with db_cursor() as cur:
+        for code, porta in desired - existing_keys:
+            cur.execute(
+                "INSERT INTO test_items (project_id, standard_code, porta, status) VALUES (?, ?, ?, 'pendente')",
+                (project_id, code, porta),
+            )
+        for item in existing:
+            key = (item["standard_code"], item["porta"])
+            if key not in desired and item["status"] == "pendente" and item["session_id"] is None:
+                cur.execute("DELETE FROM test_items WHERE id = ?", (item["id"],))
 
 
 def list_projects() -> list[dict]:

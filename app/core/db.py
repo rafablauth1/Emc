@@ -8,6 +8,15 @@ CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     client TEXT,
+    fabricante TEXT,
+    modelo TEXT,
+    numero TEXT,
+    serie TEXT,
+    tensao_nominal TEXT,
+    corrente_nominal TEXT,
+    protocolo TEXT,
+    data_entrada TEXT,
+    previsao_saida TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -30,6 +39,7 @@ CREATE TABLE IF NOT EXISTS test_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     standard_code TEXT NOT NULL,
+    porta TEXT NOT NULL DEFAULT 'alimentação',
     status TEXT NOT NULL DEFAULT 'pendente',
     scheduled_date TEXT,
     session_id INTEGER REFERENCES test_sessions(id)
@@ -88,10 +98,40 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+# Colunas adicionadas depois da criação inicial das tabelas — "CREATE TABLE IF
+# NOT EXISTS" não adiciona coluna em tabela que já existe, então cada uma
+# precisa ser migrada aqui (idempotente: só adiciona se ainda não existir).
+_COLUMN_MIGRATIONS = {
+    "projects": [
+        ("fabricante", "TEXT"),
+        ("modelo", "TEXT"),
+        ("numero", "TEXT"),
+        ("serie", "TEXT"),
+        ("tensao_nominal", "TEXT"),
+        ("corrente_nominal", "TEXT"),
+        ("protocolo", "TEXT"),
+        ("data_entrada", "TEXT"),
+        ("previsao_saida", "TEXT"),
+    ],
+    "test_items": [
+        ("porta", "TEXT NOT NULL DEFAULT 'alimentação'"),
+    ],
+}
+
+
+def _run_column_migrations(conn: sqlite3.Connection) -> None:
+    for table, columns in _COLUMN_MIGRATIONS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, coltype in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {coltype}")
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(SCHEMA)
+        _run_column_migrations(conn)
         conn.commit()
     finally:
         conn.close()
