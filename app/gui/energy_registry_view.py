@@ -106,6 +106,26 @@ class EnergyRegistryView(QWidget):
                 "cada ensaio. A Legenda é preenchida sozinha ao digitar o Código."
             )
         )
+
+        filter_box = QGroupBox("Filtrar leituras")
+        filter_layout = QHBoxLayout(filter_box)
+        filter_layout.addWidget(QLabel("Ensaio:"))
+        self.filter_ensaio_combo = QComboBox()
+        self.filter_ensaio_combo.currentIndexChanged.connect(self._apply_filters)
+        filter_layout.addWidget(self.filter_ensaio_combo)
+        filter_layout.addWidget(QLabel("Código:"))
+        self.filter_codigo_combo = QComboBox()
+        self.filter_codigo_combo.currentIndexChanged.connect(self._apply_filters)
+        filter_layout.addWidget(self.filter_codigo_combo)
+        refresh_filters_btn = QPushButton("Atualizar filtros")
+        refresh_filters_btn.clicked.connect(self._refresh_filter_options)
+        filter_layout.addWidget(refresh_filters_btn)
+        clear_filters_btn = QPushButton("Limpar filtros")
+        clear_filters_btn.clicked.connect(self._clear_filters)
+        filter_layout.addWidget(clear_filters_btn)
+        filter_layout.addStretch(1)
+        layout.addWidget(filter_box)
+
         self.table = QTableWidget(0, len(COLUMN_LABELS))
         self.table.setHorizontalHeaderLabels(COLUMN_LABELS)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -201,6 +221,7 @@ class EnergyRegistryView(QWidget):
         for leitura in leituras:
             self._append_row(leitura)
         self.table.blockSignals(False)
+        self._refresh_filter_options()
 
     def _combo_codes(self, current: str = "") -> list[str]:
         """Ensaios do projeto atual (só os que foram marcados na criação do
@@ -320,6 +341,7 @@ class EnergyRegistryView(QWidget):
                     "observacoes": "Preencher Registro Final com o tempo total do ensaio, em segundos.",
                 }
             )
+            self._refresh_filter_options()
             return
 
         codes = planner.get_applicable_codes(self.current_project_id)
@@ -333,6 +355,7 @@ class EnergyRegistryView(QWidget):
             return
         for codigo in codes:
             self._append_row({**base, "codigo": str(codigo), "legenda": energy_registry.get_legend(codigo)})
+        self._refresh_filter_options()
 
     def _sort_by_consumption(self) -> None:
         """Reordena os blocos (mesmo ensaio + mesma tensão) do menor pro maior
@@ -444,6 +467,54 @@ class EnergyRegistryView(QWidget):
             self.table.setItem(row, COL_LEGENDA, legenda_item)
         legenda_item.setText(legenda)
         self.table.blockSignals(False)
+
+    # ---- filtrar leituras (por ensaio e por código) ----
+
+    def _refresh_filter_options(self) -> None:
+        current_ensaio = self.filter_ensaio_combo.currentData() if self.filter_ensaio_combo.count() else None
+        current_codigo = self.filter_codigo_combo.currentData() if self.filter_codigo_combo.count() else None
+
+        self.filter_ensaio_combo.blockSignals(True)
+        self.filter_ensaio_combo.clear()
+        self.filter_ensaio_combo.addItem("Todos", None)
+        for code in self._project_standard_codes:
+            self.filter_ensaio_combo.addItem(f"{code} — {STANDARDS.get(code, '')}", code)
+        index = self.filter_ensaio_combo.findData(current_ensaio)
+        self.filter_ensaio_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.filter_ensaio_combo.blockSignals(False)
+
+        codigos_na_tabela = sorted(
+            {self._row_to_dict(r)["codigo"] for r in range(self.table.rowCount()) if self._row_to_dict(r)["codigo"]},
+            key=lambda c: (len(c), c),
+        )
+        self.filter_codigo_combo.blockSignals(True)
+        self.filter_codigo_combo.clear()
+        self.filter_codigo_combo.addItem("Todos", None)
+        for codigo in codigos_na_tabela:
+            legenda = energy_registry.get_legend(int(codigo)) if codigo.isdigit() else ""
+            label = f"{codigo} — {legenda}" if legenda else codigo
+            self.filter_codigo_combo.addItem(label, codigo)
+        index2 = self.filter_codigo_combo.findData(current_codigo)
+        self.filter_codigo_combo.setCurrentIndex(index2 if index2 >= 0 else 0)
+        self.filter_codigo_combo.blockSignals(False)
+
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        ensaio_filter = self.filter_ensaio_combo.currentData() if self.filter_ensaio_combo.count() else None
+        codigo_filter = self.filter_codigo_combo.currentData() if self.filter_codigo_combo.count() else None
+        for r in range(self.table.rowCount()):
+            d = self._row_to_dict(r)
+            match = True
+            if ensaio_filter and d["standard_code"] != ensaio_filter:
+                match = False
+            if codigo_filter and d["codigo"] != codigo_filter:
+                match = False
+            self.table.setRowHidden(r, not match)
+
+    def _clear_filters(self) -> None:
+        self.filter_ensaio_combo.setCurrentIndex(0)
+        self.filter_codigo_combo.setCurrentIndex(0)
 
     # ---- encadear ensaios (registro final de um vira o inicial do outro) ----
 
