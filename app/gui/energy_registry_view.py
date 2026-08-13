@@ -89,6 +89,15 @@ class EnergyRegistryView(QWidget):
         generator_form.addRow("Valor (V):", self.gen_valor_edit)
         self.gen_foto_checkbox = QCheckBox("Foto realizada")
         generator_form.addRow("", self.gen_foto_checkbox)
+        self.gen_clock_mode_checkbox = QCheckBox(
+            "Modo relógio (10 medidas de tempo, igualmente espaçadas)"
+        )
+        self.gen_clock_mode_checkbox.toggled.connect(self._toggle_clock_mode)
+        generator_form.addRow("", self.gen_clock_mode_checkbox)
+        self.gen_total_time_edit = QLineEdit()
+        self.gen_total_time_edit.setPlaceholderText("tempo total do ensaio, em segundos")
+        self.gen_total_time_edit.setEnabled(False)
+        generator_form.addRow("Tempo total do ensaio (s):", self.gen_total_time_edit)
         gen_btn_row = QHBoxLayout()
         gen_btn = QPushButton("Gerar leituras (códigos do cadastro)")
         gen_btn.clicked.connect(self._generate_readings)
@@ -290,26 +299,22 @@ class EnergyRegistryView(QWidget):
             }
         )
 
+    def _toggle_clock_mode(self, checked: bool) -> None:
+        self.gen_total_time_edit.setEnabled(checked)
+
     def _generate_readings(self) -> None:
-        """Gera uma linha por código aplicável (definido no Cadastro) para o
-        ensaio/tensão escolhidos acima — em vez de adicionar código por código
-        na mão. Cobre 'dados via Display': os códigos aplicáveis são os que o
-        display do medidor mostra, cadastrados uma vez só."""
+        """Gera as linhas de leitura pro ensaio/tensão escolhidos acima, de duas
+        formas: normal (uma linha por código aplicável do Cadastro — cobre 'dados
+        via Display', onde os códigos aplicáveis são os que o display mostra) ou
+        'modo relógio' (10 medidas de tempo igualmente espaçadas ao longo da
+        duração total do ensaio, pra verificar se o relógio do medidor não atrasa/
+        adianta durante o distúrbio)."""
         if self.current_project_id is None:
             QMessageBox.warning(self, "Gerar leituras", "Selecione um projeto antes de gerar leituras.")
             return
         standard_code = self.gen_ensaio_combo.currentData()
         if not standard_code:
             QMessageBox.warning(self, "Gerar leituras", "Este projeto não tem ensaios cadastrados.")
-            return
-        codes = planner.get_applicable_codes(self.current_project_id)
-        if not codes:
-            QMessageBox.warning(
-                self,
-                "Gerar leituras",
-                "Nenhum código aplicável cadastrado para este projeto ainda. "
-                "Defina em Planner > Editar cadastro > Códigos aplicáveis.",
-            )
             return
         tensao_label = self.gen_tensao_edit.text().strip() or "TENSÃO 1"
         base = {
@@ -319,6 +324,37 @@ class EnergyRegistryView(QWidget):
             "valor_v": self.gen_valor_edit.text().strip(),
             "foto_realizada": self.gen_foto_checkbox.isChecked(),
         }
+
+        if self.gen_clock_mode_checkbox.isChecked():
+            try:
+                total_s = float(self.gen_total_time_edit.text().strip())
+            except ValueError:
+                QMessageBox.warning(
+                    self, "Modo relógio", "Informe o tempo total do ensaio em segundos (número)."
+                )
+                return
+            interval = total_s / 9 if total_s > 0 else 0
+            for i in range(10):
+                t = i * interval
+                self._append_row(
+                    {
+                        **base,
+                        "codigo": "2",
+                        "legenda": energy_registry.get_legend(2),
+                        "observacoes": f"Modo relógio — ponto {i + 1}/10, tempo alvo {t:.1f}s (total {total_s:.0f}s)",
+                    }
+                )
+            return
+
+        codes = planner.get_applicable_codes(self.current_project_id)
+        if not codes:
+            QMessageBox.warning(
+                self,
+                "Gerar leituras",
+                "Nenhum código aplicável cadastrado para este projeto ainda. "
+                "Defina em Planner > Editar cadastro > Códigos aplicáveis.",
+            )
+            return
         for codigo in codes:
             self._append_row({**base, "codigo": str(codigo), "legenda": energy_registry.get_legend(codigo)})
 
