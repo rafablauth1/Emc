@@ -177,6 +177,7 @@ class ExecutionView(QWidget):
         self.counter_mode_combo = QComboBox()
         self.counter_mode_combo.addItem("Configuração manual (app configura o gate)", "manual")
         self.counter_mode_combo.addItem("Via Recall (usa config. já salva no instrumento)", "recall")
+        self.counter_mode_combo.addItem("Cronômetro (Iniciar/Finalizar, registra a diferença)", "stopwatch")
         self.counter_mode_combo.currentIndexChanged.connect(self._on_counter_mode_changed)
         counter_form.addRow("Modo:", self.counter_mode_combo)
 
@@ -201,6 +202,16 @@ class ExecutionView(QWidget):
         self.counter_interval_spin.setSuffix(" s")
         counter_form.addRow("Intervalo entre leituras:", self.counter_interval_spin)
         self._counter_interval_label = counter_form.labelForField(self.counter_interval_spin)
+
+        self.counter_decimals_spin = QSpinBox()
+        self.counter_decimals_spin.setRange(0, 9)
+        self.counter_decimals_spin.setValue(0)
+        self.counter_decimals_spin.setToolTip(
+            "Ajusta onde entra a vírgula no valor bruto do contador — ex.: valor "
+            "299998739 com 7 casas decimais vira 29,9998739. Não muda o valor "
+            "real medido, só como ele é exibido/salvo."
+        )
+        counter_form.addRow("Casas decimais:", self.counter_decimals_spin)
         box_layout.addLayout(counter_form)
 
         self.counter_recall_hint = QLabel(
@@ -211,6 +222,11 @@ class ExecutionView(QWidget):
         self.counter_recall_hint.setWordWrap(True)
         self.counter_recall_hint.setVisible(False)
         box_layout.addWidget(self.counter_recall_hint)
+
+        self.counter_stopwatch_status = QLabel("")
+        self.counter_stopwatch_status.setWordWrap(True)
+        self.counter_stopwatch_status.setVisible(False)
+        box_layout.addWidget(self.counter_stopwatch_status)
 
         counter_btn_row = QHBoxLayout()
         self.counter_start_btn = QPushButton("Iniciar leitura contínua")
@@ -849,13 +865,22 @@ class ExecutionView(QWidget):
         self.counter_table.setRowCount(0)
         self._counter_project_id = project_id
         self._counter_log_path = None
-        self.counter_file_label.setText("Aguardando a primeira leitura...")
 
         mode = self.counter_mode_combo.currentData()
-        is_recall = mode == "recall"
-        recall_register = self.counter_recall_spin.value() if is_recall else None
-        gate_time = None if is_recall else self.counter_gate_spin.value()
-        interval = None if is_recall else self.counter_interval_spin.value()
+        needs_gate = mode == "manual"
+        uses_recall_register = mode in ("recall", "stopwatch")
+        recall_register = self.counter_recall_spin.value() if uses_recall_register else None
+        gate_time = self.counter_gate_spin.value() if needs_gate else None
+        interval = self.counter_interval_spin.value() if needs_gate else None
+
+        if mode == "stopwatch":
+            self.counter_file_label.setText("")
+            self.counter_stopwatch_status.setText("Conectando e capturando o valor inicial...")
+            self.counter_stopwatch_status.setVisible(True)
+        else:
+            self.counter_stopwatch_status.setVisible(False)
+            self.counter_file_label.setText("Aguardando a primeira leitura...")
+
         self._counter_worker = CounterWorker(
             counter,
             gate_time,
@@ -865,6 +890,7 @@ class ExecutionView(QWidget):
             parent=self,
         )
         self._counter_worker.reading.connect(self._on_counter_reading)
+        self._counter_worker.stopwatch_started.connect(self._on_counter_stopwatch_started)
         self._counter_worker.error.connect(self._on_counter_error)
         self._counter_worker.stopped.connect(self._on_counter_stopped)
         self.counter_start_btn.setEnabled(False)
@@ -873,28 +899,47 @@ class ExecutionView(QWidget):
         self.counter_recall_spin.setEnabled(False)
         self.counter_gate_spin.setEnabled(False)
         self.counter_interval_spin.setEnabled(False)
+        self.counter_decimals_spin.setEnabled(False)
         self._counter_worker.start()
 
     def _on_counter_mode_changed(self, _index: int) -> None:
-        is_recall = self.counter_mode_combo.currentData() == "recall"
-        self.counter_recall_spin.setVisible(is_recall)
-        self._counter_recall_label.setVisible(is_recall)
-        self.counter_gate_spin.setVisible(not is_recall)
-        self._counter_gate_label.setVisible(not is_recall)
-        self.counter_interval_spin.setVisible(not is_recall)
-        self._counter_interval_label.setVisible(not is_recall)
+        mode = self.counter_mode_combo.currentData()
+        is_recall = mode == "recall"
+        is_stopwatch = mode == "stopwatch"
+        needs_gate = mode == "manual"
+        self.counter_recall_spin.setVisible(is_recall or is_stopwatch)
+        self._counter_recall_label.setVisible(is_recall or is_stopwatch)
+        self.counter_gate_spin.setVisible(needs_gate)
+        self._counter_gate_label.setVisible(needs_gate)
+        self.counter_interval_spin.setVisible(needs_gate)
+        self._counter_interval_label.setVisible(needs_gate)
         self.counter_recall_hint.setVisible(is_recall)
+        self.counter_start_btn.setText(
+            "Iniciar cronômetro" if is_stopwatch else "Iniciar leitura contínua"
+        )
+        self.counter_stop_btn.setText("Finalizar cronômetro" if is_stopwatch else "Parar")
 
     def _stop_counter(self) -> None:
         if self._counter_worker is not None:
             self.counter_stop_btn.setEnabled(False)
             self._counter_worker.request_stop()
 
+    def _format_counter_value(self, value: float) -> str:
+        """Ajusta onde entra a vírgula no valor bruto (o contador manda um
+        inteiro sem separador — ex.: 299998739 — e o operador informa quantas
+        casas decimais contar da direita pra chegar no valor real, ex.:
+        29,9998739 com 7 casas). Não altera o valor medido, só a exibição."""
+        decimals = self.counter_decimals_spin.value()
+        if decimals <= 0:
+            return f"{value:.0f}"
+        return f"{value / (10 ** decimals):.{decimals}f}"
+
     def _on_counter_reading(self, timestamp: str, value: float) -> None:
+        formatted = self._format_counter_value(value)
         row = self.counter_table.rowCount()
         self.counter_table.insertRow(row)
         self.counter_table.setItem(row, 0, QTableWidgetItem(timestamp))
-        self.counter_table.setItem(row, 1, QTableWidgetItem(f"{value:.0f}"))
+        self.counter_table.setItem(row, 1, QTableWidgetItem(formatted))
         self.counter_table.scrollToBottom()
 
         if self._counter_project_id is None:
@@ -904,8 +949,15 @@ class ExecutionView(QWidget):
             name = datetime.now().strftime("contador_rtc_%Y%m%d_%H%M%S.txt")
             self._counter_log_path = folder / name
         with open(self._counter_log_path, "a", encoding="utf-8") as f:
-            f.write(f"{timestamp} | {value:.0f}\n")
+            f.write(f"{timestamp} | {formatted}\n")
         self.counter_file_label.setText(f"Salvando em: {self._counter_log_path.name}")
+
+    def _on_counter_stopwatch_started(self, timestamp: str, value: float) -> None:
+        formatted = self._format_counter_value(value)
+        self.counter_stopwatch_status.setText(
+            f"Cronômetro iniciado às {timestamp} — valor inicial: {formatted}. "
+            "Clique em \"Finalizar cronômetro\" quando quiser encerrar."
+        )
 
     def _on_counter_error(self, message: str) -> None:
         QMessageBox.warning(self, "Contador RTC", f"Erro na leitura do contador: {message}")
@@ -920,3 +972,4 @@ class ExecutionView(QWidget):
         self.counter_recall_spin.setEnabled(True)
         self.counter_gate_spin.setEnabled(True)
         self.counter_interval_spin.setEnabled(True)
+        self.counter_decimals_spin.setEnabled(True)
