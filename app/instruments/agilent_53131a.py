@@ -31,26 +31,34 @@ class _SimulatedCounterTransport:
 
 
 class Agilent53131ACounter:
-    """Driver pro contador de frequência Agilent 53131A via GPIB, usado no
-    ensaio de RTC/Timer (mede a contagem total de pulsos do oscilador do
-    medidor durante um tempo de gate fixo — :CONFigure:TOTalize:TIMed).
+    """Driver pro contador de frequência Agilent 53131A, usado no ensaio de
+    RTC/Timer (mede a contagem total de pulsos do oscilador do medidor
+    durante um tempo de gate fixo — :CONFigure:TOTalize:TIMed). Conecta via
+    GPIB ou RS-232 (serial) — os comandos SCPI são os mesmos nos dois casos.
 
-    Sequência de comandos baseada no script validado em campo
-    (TIMER_RTC_TESTE.py): configura o gate, dispara com INIT, aguarda o gate
-    terminar e só então consulta o resultado. Confirmado em campo (erro SCPI
-    -213 "Init ignored") que a leitura final precisa ser :FETCh? — não
-    :MEASure:...? — porque esse último dispara outro INIT por dentro.
+    Sequência de comandos baseada nos scripts validados em campo
+    (TIMER_RTC_TESTE.py para GPIB, Timer_RTC.py para RS-232): configura o
+    gate, dispara com INIT, aguarda o gate terminar e só então consulta o
+    resultado. Confirmado em campo (erro SCPI -213 "Init ignored") que a
+    leitura final precisa ser :FETCh? — não :MEASure:...? — porque esse
+    último dispara outro INIT por dentro.
     """
 
     def __init__(
         self,
+        connection: str = "gpib",  # "gpib" ou "serial"
         gpib_address: int = 1,
-        gpib_board: int = 1,
+        gpib_board: int = 0,
+        serial_port: int = 3,
+        serial_baud_rate: int = 9600,
         simulate: bool | None = None,
         timeout_ms: int = 10000,
     ):
+        self.connection = connection
         self.gpib_address = gpib_address
         self.gpib_board = gpib_board
+        self.serial_port = serial_port
+        self.serial_baud_rate = serial_baud_rate
         self.simulate = SIMULATION_MODE if simulate is None else simulate
         self.timeout_ms = timeout_ms
         self._inst = None
@@ -64,8 +72,18 @@ class Agilent53131ACounter:
         import pyvisa
 
         rm = pyvisa.ResourceManager()
-        resource = f"GPIB{self.gpib_board}::{self.gpib_address}::INSTR"
-        self._inst = rm.open_resource(resource)
+        if self.connection == "serial":
+            resource = f"ASRL{self.serial_port}::INSTR"
+            self._inst = rm.open_resource(resource)
+            # mesma configuração de porta do script validado em campo
+            # (Timer_RTC.py): 9600 baud, 8 bits, sem paridade, 1 stop bit.
+            self._inst.baud_rate = self.serial_baud_rate
+            self._inst.data_bits = 8
+            self._inst.parity = pyvisa.constants.Parity.none
+            self._inst.stop_bits = pyvisa.constants.StopBits.one
+        else:
+            resource = f"GPIB{self.gpib_board}::{self.gpib_address}::INSTR"
+            self._inst = rm.open_resource(resource)
         self._inst.timeout = self.timeout_ms
         logger.info("[Agilent53131A] conectado em %s", resource)
 

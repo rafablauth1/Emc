@@ -34,7 +34,13 @@ DEFAULT_GPIB_BOARDS = {
 DEFAULT_SERIAL_PORTS = {
     "ucs500n": "COM3",
     "chroma": "COM4",
+    # número da porta ASRL (ex.: 3 → COM3, formato ASRL3::INSTR do VISA),
+    # confirmado no script validado em campo (Timer_RTC.py).
+    "agilent_53131a": 3,
 }
+
+# Conexão padrão do contador Agilent 53131A: "gpib" ou "serial" (RS-232).
+DEFAULT_COUNTER_CONNECTION = "gpib"
 
 STANDARDS = {
     "4-2": "Descarga Eletrostática (ESD)",

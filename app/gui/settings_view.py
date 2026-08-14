@@ -90,6 +90,15 @@ class SettingsView(QWidget):
         )
         form.addRow("Endereço GPIB — Chroma 61501/61504:", self.chroma_addr_spin)
 
+        self.counter_connection_combo = QComboBox()
+        self.counter_connection_combo.addItem("GPIB", "gpib")
+        self.counter_connection_combo.addItem("Serial (RS-232)", "serial")
+        index = self.counter_connection_combo.findData(settings.counter_connection)
+        if index >= 0:
+            self.counter_connection_combo.setCurrentIndex(index)
+        self.counter_connection_combo.currentIndexChanged.connect(self._on_counter_connection_changed)
+        form.addRow("Conexão — Contador Agilent 53131A:", self.counter_connection_combo)
+
         self.counter_board_spin = QSpinBox()
         self.counter_board_spin.setRange(0, 15)
         self.counter_board_spin.setValue(settings.gpib_boards["agilent_53131a"])
@@ -97,6 +106,7 @@ class SettingsView(QWidget):
             lambda v: settings.gpib_boards.__setitem__("agilent_53131a", v)
         )
         form.addRow("Placa GPIB — Contador Agilent 53131A:", self.counter_board_spin)
+        self._counter_board_label = form.labelForField(self.counter_board_spin)
 
         self.counter_addr_spin = QSpinBox()
         self.counter_addr_spin.setRange(0, 30)
@@ -105,7 +115,20 @@ class SettingsView(QWidget):
             lambda v: settings.gpib_addresses.__setitem__("agilent_53131a", v)
         )
         form.addRow("Endereço GPIB — Contador Agilent 53131A:", self.counter_addr_spin)
+        self._counter_addr_label = form.labelForField(self.counter_addr_spin)
+
+        self.counter_serial_spin = QSpinBox()
+        self.counter_serial_spin.setRange(1, 99)
+        self.counter_serial_spin.setPrefix("COM")
+        self.counter_serial_spin.setValue(settings.serial_ports["agilent_53131a"])
+        self.counter_serial_spin.valueChanged.connect(
+            lambda v: settings.serial_ports.__setitem__("agilent_53131a", v)
+        )
+        form.addRow("Porta serial — Contador Agilent 53131A:", self.counter_serial_spin)
+        self._counter_serial_label = form.labelForField(self.counter_serial_spin)
+
         layout.addLayout(form)
+        self._on_counter_connection_changed(self.counter_connection_combo.currentIndex())
 
         layout.addWidget(QLabel("Teste de comunicação GPIB (connect + *IDN?):"))
 
@@ -224,6 +247,17 @@ class SettingsView(QWidget):
 
     def _on_buzzer_toggled(self, checked: bool) -> None:
         settings.buzzer_enabled = checked
+
+    def _on_counter_connection_changed(self, _index: int) -> None:
+        connection = self.counter_connection_combo.currentData()
+        settings.counter_connection = connection
+        is_serial = connection == "serial"
+        self.counter_board_spin.setVisible(not is_serial)
+        self._counter_board_label.setVisible(not is_serial)
+        self.counter_addr_spin.setVisible(not is_serial)
+        self._counter_addr_label.setVisible(not is_serial)
+        self.counter_serial_spin.setVisible(is_serial)
+        self._counter_serial_label.setVisible(is_serial)
 
     def _test_comm(self, instrument: str, driver_factory) -> None:
         status_labels = {

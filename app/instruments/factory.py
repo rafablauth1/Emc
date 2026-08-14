@@ -23,8 +23,10 @@ def build_chroma_driver() -> Chroma615xxDriver:
 
 def build_agilent_counter_driver() -> Agilent53131ACounter:
     return Agilent53131ACounter(
+        connection=settings.counter_connection,
         gpib_address=settings.gpib_addresses["agilent_53131a"],
         gpib_board=settings.gpib_boards["agilent_53131a"],
+        serial_port=settings.serial_ports["agilent_53131a"],
         simulate=settings.simulation_mode,
     )
 
