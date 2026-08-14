@@ -142,19 +142,45 @@ class _CadastroDialog(QDialog):
 
         layout.addWidget(QLabel("Ensaios que se aplicam a este projeto:"))
         self.checkboxes: dict[str, QCheckBox] = {}
+        self.alim_checkboxes: dict[str, QCheckBox] = {}
         self.comm_checkboxes: dict[str, QCheckBox] = {}
+        self.tipo_comunicacao_edits: dict[str, QLineEdit] = {}
         for code, description in STANDARDS.items():
             row = QHBoxLayout()
-            checkbox = QCheckBox(f"{code} — {description}")
-            checkbox.setChecked(is_new or (code, "alimentação") in existing_keys)
-            row.addWidget(checkbox)
-            self.checkboxes[code] = checkbox
             if code in COMM_LINE_ELIGIBLE_STANDARDS:
-                comm_checkbox = QCheckBox("também na linha de comunicação")
+                row.addWidget(QLabel(f"{code} — {description}"))
+
+                alim_checkbox = QCheckBox("Alimentação")
+                alim_checkbox.setChecked(is_new or (code, "alimentação") in existing_keys)
+                row.addWidget(alim_checkbox)
+                self.alim_checkboxes[code] = alim_checkbox
+
+                comm_checkbox = QCheckBox("Comunicação")
                 comm_checkbox.setChecked((code, "comunicação") in existing_keys)
                 row.addWidget(comm_checkbox)
                 self.comm_checkboxes[code] = comm_checkbox
-            row.addStretch(1)
+
+                tipo_edit = QLineEdit()
+                tipo_edit.setPlaceholderText("Tipo de comunicação (ex.: RS-485, óptico)")
+                existing_tipo = next(
+                    (
+                        item.get("tipo_comunicacao")
+                        for item in (existing_items or [])
+                        if item["standard_code"] == code and item["porta"] == "comunicação"
+                    ),
+                    "",
+                )
+                tipo_edit.setText(existing_tipo or "")
+                tipo_edit.setEnabled(comm_checkbox.isChecked())
+                comm_checkbox.toggled.connect(tipo_edit.setEnabled)
+                row.addWidget(tipo_edit, 1)
+                self.tipo_comunicacao_edits[code] = tipo_edit
+            else:
+                checkbox = QCheckBox(f"{code} — {description}")
+                checkbox.setChecked(is_new or (code, "alimentação") in existing_keys)
+                row.addWidget(checkbox)
+                self.checkboxes[code] = checkbox
+                row.addStretch(1)
             layout.addLayout(row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -183,10 +209,21 @@ class _CadastroDialog(QDialog):
         return list(self._applicable_codes)
 
     def selected_standards(self) -> list[str]:
-        return [code for code, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+        result = [code for code, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+        for code, alim_checkbox in self.alim_checkboxes.items():
+            if alim_checkbox.isChecked() or self.comm_checkboxes[code].isChecked():
+                result.append(code)
+        return result
 
-    def selected_comm_line_standards(self) -> list[str]:
-        return [code for code, checkbox in self.comm_checkboxes.items() if checkbox.isChecked()]
+    def comm_line_config(self) -> dict[str, dict]:
+        return {
+            code: {
+                "alimentacao": alim_checkbox.isChecked(),
+                "comunicacao": self.comm_checkboxes[code].isChecked(),
+                "tipo_comunicacao": self.tipo_comunicacao_edits[code].text().strip(),
+            }
+            for code, alim_checkbox in self.alim_checkboxes.items()
+        }
 
 
 class PlannerView(QWidget):
@@ -197,6 +234,17 @@ class PlannerView(QWidget):
         self.current_project_id: int | None = None
 
         layout = QVBoxLayout(self)
+
+        overview_box = QGroupBox("Projetos em execução")
+        overview_layout = QVBoxLayout(overview_box)
+        self.overview_table = QTableWidget(0, 4)
+        self.overview_table.setHorizontalHeaderLabels(["Projeto", "Cliente", "Progresso", ""])
+        self.overview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.overview_table.setAlternatingRowColors(True)
+        self.overview_table.verticalHeader().setDefaultSectionSize(28)
+        self.overview_table.setMaximumHeight(160)
+        overview_layout.addWidget(self.overview_table)
+        layout.addWidget(overview_box)
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel("Projeto:"))
@@ -213,6 +261,20 @@ class PlannerView(QWidget):
         delete_project_btn.clicked.connect(self._delete_project)
         top_bar.addWidget(delete_project_btn)
         layout.addLayout(top_bar)
+
+        status_box = QGroupBox("Status do projeto")
+        status_layout = QHBoxLayout(status_box)
+        status_layout.addWidget(QLabel("Situação:"))
+        self.project_status_label = QLabel("—")
+        status_layout.addWidget(self.project_status_label)
+        status_layout.addStretch(1)
+        self.finalize_btn = QPushButton("Finalizar projeto")
+        self.finalize_btn.clicked.connect(self._finalize_project)
+        status_layout.addWidget(self.finalize_btn)
+        self.reopen_btn = QPushButton("Reabrir projeto")
+        self.reopen_btn.clicked.connect(self._reopen_project)
+        status_layout.addWidget(self.reopen_btn)
+        layout.addWidget(status_box)
 
         cadastro_box = QGroupBox("Cadastro")
         cadastro_layout = QFormLayout(cadastro_box)
@@ -261,8 +323,12 @@ class PlannerView(QWidget):
         self.project_combo.clear()
         projects = planner.list_projects()
         for project in projects:
-            self.project_combo.addItem(project["name"], project["id"])
+            label = project["name"]
+            if (project.get("status") or "ativo") == "finalizado":
+                label += " (finalizado)"
+            self.project_combo.addItem(label, project["id"])
         self.project_combo.blockSignals(False)
+        self.refresh_overview()
         if select_project_id is not None:
             index = self.project_combo.findData(select_project_id)
             if index >= 0:
@@ -276,6 +342,32 @@ class PlannerView(QWidget):
             self.current_project_id = None
             self._load_cadastro_summary()
             self._load_checklist()
+            self._load_project_status()
+
+    def refresh_overview(self) -> None:
+        projects = planner.list_active_projects()
+        self.overview_table.setRowCount(len(projects))
+        for row, project in enumerate(projects):
+            items = planner.list_test_items(project["id"])
+            total = len(items)
+            done = sum(1 for item in items if item["status"] == "concluido")
+            self.overview_table.setItem(row, 0, QTableWidgetItem(project["name"]))
+            self.overview_table.setItem(row, 1, QTableWidgetItem(project["client"] or ""))
+            self.overview_table.setItem(row, 2, QTableWidgetItem(f"{done}/{total} ensaios concluídos"))
+            open_btn = QPushButton("Abrir")
+            open_btn.clicked.connect(lambda _checked=False, pid=project["id"]: self._open_from_overview(pid))
+            self.overview_table.setCellWidget(row, 3, open_btn)
+        if not projects:
+            self.overview_table.setRowCount(1)
+            empty_item = QTableWidgetItem("Nenhum projeto em execução no momento.")
+            empty_item.setFlags(empty_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.overview_table.setItem(0, 0, empty_item)
+            self.overview_table.setSpan(0, 0, 1, 4)
+
+    def _open_from_overview(self, project_id: int) -> None:
+        index = self.project_combo.findData(project_id)
+        if index >= 0:
+            self.project_combo.setCurrentIndex(index)
 
     def _create_project(self) -> None:
         dialog = _CadastroDialog(self)
@@ -289,7 +381,7 @@ class PlannerView(QWidget):
             dialog.client_edit.text().strip(),
             dialog.selected_standards(),
             dialog.header_values(),
-            dialog.selected_comm_line_standards(),
+            dialog.comm_line_config(),
             dialog.applicable_codes(),
         )
         self.refresh_projects(select_project_id=project_id)
@@ -315,7 +407,7 @@ class PlannerView(QWidget):
             dialog.applicable_codes(),
         )
         planner.set_project_standards(
-            self.current_project_id, dialog.selected_standards(), dialog.selected_comm_line_standards()
+            self.current_project_id, dialog.selected_standards(), dialog.comm_line_config()
         )
         self.refresh_projects(select_project_id=self.current_project_id)
         self.refresh_schedule()
@@ -325,6 +417,41 @@ class PlannerView(QWidget):
         self.current_project_id = project_id
         self._load_cadastro_summary()
         self._load_checklist()
+        self._load_project_status()
+
+    def _load_project_status(self) -> None:
+        project = planner.get_project(self.current_project_id) if self.current_project_id else None
+        if not project:
+            self.project_status_label.setText("—")
+            self.finalize_btn.setEnabled(False)
+            self.reopen_btn.setEnabled(False)
+            self.finalize_btn.setVisible(True)
+            self.reopen_btn.setVisible(False)
+            return
+        status = project.get("status") or "ativo"
+        finalizado = status == "finalizado"
+        self.project_status_label.setText("Finalizado" if finalizado else "Ativo")
+        self.finalize_btn.setVisible(not finalizado)
+        self.reopen_btn.setVisible(finalizado)
+        self.finalize_btn.setEnabled(True)
+        self.reopen_btn.setEnabled(True)
+
+    def _finalize_project(self) -> None:
+        if self.current_project_id is None:
+            return
+        confirm = QMessageBox.question(
+            self, "Finalizar projeto", "Marcar este projeto como finalizado?"
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        planner.finalize_project(self.current_project_id)
+        self.refresh_projects(select_project_id=self.current_project_id)
+
+    def _reopen_project(self) -> None:
+        if self.current_project_id is None:
+            return
+        planner.reopen_project(self.current_project_id)
+        self.refresh_projects(select_project_id=self.current_project_id)
 
     def _load_cadastro_summary(self) -> None:
         project = planner.get_project(self.current_project_id) if self.current_project_id else None
@@ -344,7 +471,10 @@ class PlannerView(QWidget):
         for row, item in enumerate(items):
             standard_code = item["standard_code"]
             self.checklist_table.setItem(row, 0, QTableWidgetItem(standard_code))
-            self.checklist_table.setItem(row, 1, QTableWidgetItem(item["porta"]))
+            porta_label = item["porta"]
+            if item.get("tipo_comunicacao"):
+                porta_label += f" ({item['tipo_comunicacao']})"
+            self.checklist_table.setItem(row, 1, QTableWidgetItem(porta_label))
             self.checklist_table.setItem(
                 row, 2, QTableWidgetItem(STANDARDS.get(standard_code, ""))
             )

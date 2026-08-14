@@ -124,6 +124,9 @@ class EnergyRegistryView(QWidget):
         clear_filters_btn.clicked.connect(self._clear_filters)
         filter_layout.addWidget(clear_filters_btn)
         filter_layout.addStretch(1)
+        expand_btn = QPushButton("Expandir tabela")
+        expand_btn.clicked.connect(self._expand_table)
+        filter_layout.addWidget(expand_btn)
         layout.addWidget(filter_box)
 
         self.table = QTableWidget(0, len(COLUMN_LABELS))
@@ -131,26 +134,13 @@ class EnergyRegistryView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.cellChanged.connect(self._on_cell_changed)
         layout.addWidget(self.table, 1)
+        self._table_layout = layout
+        self._table_index = layout.indexOf(self.table)
 
         btn_row = QHBoxLayout()
-        add_line_btn = QPushButton("Adicionar linha (mesmo bloco)")
-        add_line_btn.clicked.connect(self._add_line_same_block)
-        btn_row.addWidget(add_line_btn)
-        add_voltage_btn = QPushButton("Nova tensão (mesmo ensaio)")
-        add_voltage_btn.clicked.connect(self._add_new_voltage)
-        btn_row.addWidget(add_voltage_btn)
-        add_blank_btn = QPushButton("Adicionar linha em branco")
-        add_blank_btn.clicked.connect(self._add_blank_row)
-        btn_row.addWidget(add_blank_btn)
         remove_btn = QPushButton("Remover linha selecionada")
         remove_btn.clicked.connect(self._remove_selected_row)
         btn_row.addWidget(remove_btn)
-        up_btn = QPushButton("▲ Mover para cima")
-        up_btn.clicked.connect(lambda: self._move_row(-1))
-        btn_row.addWidget(up_btn)
-        down_btn = QPushButton("▼ Mover para baixo")
-        down_btn.clicked.connect(lambda: self._move_row(1))
-        btn_row.addWidget(down_btn)
         layout.addLayout(btn_row)
 
         btn_row2 = QHBoxLayout()
@@ -289,25 +279,6 @@ class EnergyRegistryView(QWidget):
             "observacoes": text(COL_OBS),
         }
 
-    def _add_blank_row(self) -> None:
-        self._append_row()
-
-    def _add_line_same_block(self) -> None:
-        """Nova linha de código dentro do mesmo ensaio/tensão da linha selecionada
-        (equivalente à barra verde 'Adicionar Linha de Código' da planilha)."""
-        row = self.table.currentRow()
-        if row < 0:
-            self._append_row()
-            return
-        base = self._row_to_dict(row)
-        self._append_row(
-            {
-                "standard_code": base["standard_code"],
-                "metrologista": base["metrologista"],
-                "tensao_label": base["tensao_label"],
-            }
-        )
-
     def _generate_readings(self) -> None:
         """Gera as linhas de leitura pro ensaio/tensão escolhidos acima, de duas
         formas: normal (uma linha por código aplicável do Cadastro — cobre 'dados
@@ -390,66 +361,25 @@ class EnergyRegistryView(QWidget):
                 self._append_row(row)
         self.table.blockSignals(False)
 
-    def _add_new_voltage(self) -> None:
-        """Novo bloco de tensão dentro do mesmo ensaio da linha selecionada
-        (equivalente ao botão '+ Tensão' da planilha)."""
-        row = self.table.currentRow()
-        if row < 0:
-            self._append_row()
-            return
-        base = self._row_to_dict(row)
-        existing_labels = {
-            self._row_to_dict(r)["tensao_label"]
-            for r in range(self.table.rowCount())
-            if self._row_to_dict(r)["standard_code"] == base["standard_code"]
-        }
-        n = 1
-        while f"TENSÃO {n}" in existing_labels:
-            n += 1
-        self._append_row(
-            {
-                "standard_code": base["standard_code"],
-                "metrologista": base["metrologista"],
-                "tensao_label": f"TENSÃO {n}",
-            }
-        )
-
     def _remove_selected_row(self) -> None:
         row = self.table.currentRow()
         if row >= 0:
             self.table.removeRow(row)
 
-    def _move_row(self, delta: int) -> None:
-        row = self.table.currentRow()
-        if row < 0:
-            return
-        new_row = row + delta
-        if new_row < 0 or new_row >= self.table.rowCount():
-            return
-        data = self._row_to_dict(row)
-        self.table.blockSignals(True)
-        self.table.removeRow(row)
-        self.table.insertRow(new_row)
-        combo = QComboBox()
-        for code in self._combo_codes(data["standard_code"]):
-            combo.addItem(code, code)
-        index = combo.findData(data["standard_code"])
-        if index >= 0:
-            combo.setCurrentIndex(index)
-        self.table.setCellWidget(new_row, COL_ENSAIO, combo)
-        self.table.setItem(new_row, COL_METROLOGISTA, QTableWidgetItem(data["metrologista"]))
-        self.table.setItem(new_row, COL_TENSAO_LABEL, QTableWidgetItem(data["tensao_label"]))
-        self.table.setItem(new_row, COL_CODIGO, QTableWidgetItem(str(data["codigo"])))
-        legenda_item = QTableWidgetItem(data["legenda"])
-        legenda_item.setFlags(legenda_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table.setItem(new_row, COL_LEGENDA, legenda_item)
-        self.table.setItem(new_row, COL_DATA_INI, QTableWidgetItem(data["data_inicial"]))
-        self.table.setItem(new_row, COL_REG_INI, QTableWidgetItem(data["registro_inicial"]))
-        self.table.setItem(new_row, COL_DATA_FIM, QTableWidgetItem(data["data_final"]))
-        self.table.setItem(new_row, COL_REG_FIM, QTableWidgetItem(data["registro_final"]))
-        self.table.setItem(new_row, COL_OBS, QTableWidgetItem(data["observacoes"]))
-        self.table.blockSignals(False)
-        self.table.setCurrentCell(new_row, 0)
+    def _expand_table(self) -> None:
+        """Reparenta temporariamente a tabela de leituras pra um diálogo maior,
+        pra facilitar a leitura/edição com muitas linhas. Ao fechar, a tabela
+        volta pro lugar original na aba."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Leituras — visão expandida")
+        dialog.resize(1300, 750)
+        dlg_layout = QVBoxLayout(dialog)
+        dlg_layout.addWidget(self.table)
+        close_btn = QPushButton("Fechar")
+        close_btn.clicked.connect(dialog.accept)
+        dlg_layout.addWidget(close_btn)
+        dialog.exec()
+        self._table_layout.insertWidget(self._table_index, self.table, 1)
 
     def _on_cell_changed(self, row: int, column: int) -> None:
         if column != COL_CODIGO:

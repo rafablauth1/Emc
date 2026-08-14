@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS projects (
     previsao_saida TEXT,
     origem_dados TEXT,
     codigos_json TEXT,
+    status TEXT NOT NULL DEFAULT 'ativo',
     created_at TEXT NOT NULL
 );
 
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS test_items (
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     standard_code TEXT NOT NULL,
     porta TEXT NOT NULL DEFAULT 'alimentação',
+    tipo_comunicacao TEXT,
     status TEXT NOT NULL DEFAULT 'pendente',
     scheduled_date TEXT,
     session_id INTEGER REFERENCES test_sessions(id)
@@ -117,9 +119,11 @@ _COLUMN_MIGRATIONS = {
         ("previsao_saida", "TEXT"),
         ("origem_dados", "TEXT"),
         ("codigos_json", "TEXT"),
+        ("status", "TEXT NOT NULL DEFAULT 'ativo'"),
     ],
     "test_items": [
         ("porta", "TEXT NOT NULL DEFAULT 'alimentação'"),
+        ("tipo_comunicacao", "TEXT"),
     ],
 }
 
