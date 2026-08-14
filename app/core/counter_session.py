@@ -15,10 +15,11 @@ class CounterWorker(QThread):
       TOTalize:TIMed + INIT), espera gate_time_s e lê com FETCh?, repetindo
       a cada interval_s.
     - 'recall': carrega um registro salvo no instrumento (*RCL N) uma vez no
-      início e depois só "escuta" — consulta FETCh? em polling curto, sem
-      mandar INIT nenhum (respeita o modo de disparo que já veio no
-      registro, inclusive se for :INITiate:CONTinuous ON) — e só registra
-      quando o valor lido muda, sem precisar configurar tempo/intervalo."""
+      início e depois só "escuta" — espera cada resultado ficar pronto e
+      consulta com FETCh? (sem mandar INIT, respeitando o modo de disparo
+      que já veio no registro, inclusive se for :INITiate:CONTinuous ON) —
+      e só registra quando o valor lido muda, sem precisar configurar
+      tempo/intervalo."""
 
     reading = Signal(str, float)  # timestamp ISO, valor lido
     error = Signal(str)
@@ -84,17 +85,21 @@ class CounterWorker(QThread):
         last_value = None
         while not self._stop_requested:
             try:
-                value = self.counter.try_read_current()
+                value = self.counter.read_current_blocking()
             except Exception as exc:
                 self.error.emit(str(exc))
                 break
-            if value is not None and value != last_value:
+            if self._stop_requested:
+                break
+            if value != last_value:
                 last_value = value
                 timestamp = datetime.now().isoformat(timespec="seconds")
                 self.reading.emit(timestamp, value)
-            if self._stop_requested:
-                break
-            time.sleep(0.2)
+            # pequena pausa entre consultas — não afeta o tempo real de gate
+            # (isso já é respeitado pelo FETCh? bloqueante), só evita
+            # martelar o barramento sem necessidade entre uma tentativa e
+            # outra quando o instrumento responde rápido.
+            time.sleep(0.1)
 
 
 class RecallWorker(QThread):
