@@ -102,11 +102,13 @@ class Agilent53131ACounter:
         return float(value)
 
     def read_current(self, wait_s: float) -> float:
-        """Dispara uma nova medição usando a configuração ATUALMENTE ativa no
-        instrumento (a que veio de um Recall, ou a que já estava configurada
-        no painel), sem reconfigurar nada — só INIT + aguarda + FETCh?.
-        wait_s é quanto esperar antes de consultar o resultado."""
-        self._inst.write("INIT")
+        """Lê o resultado mais recente usando a configuração ATUALMENTE ativa
+        no instrumento (a que veio de um Recall, ou a que já estava
+        configurada no painel) — sem mandar INIT. Configurações recuperadas
+        por Recall costumam já estar disparando sozinhas (:INITiate:
+        CONTinuous ON); mandar INIT nessa hora conflita com isso e o
+        instrumento recusa com o erro SCPI -213 'Init ignored'. wait_s é
+        quanto esperar antes de consultar o resultado."""
         time.sleep(wait_s)
         value = self._inst.query(":FETCh?")
         return float(value)

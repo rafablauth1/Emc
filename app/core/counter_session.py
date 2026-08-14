@@ -11,9 +11,11 @@ class CounterWorker(QThread):
     pra não travar a tela durante os gates longos (podem levar minutos).
 
     Dois modos: 'manual' configura o instrumento pelo app a cada leitura
-    (:CONFigure:TOTalize:TIMed); 'recall' carrega um registro salvo no
-    instrumento (*RCL N) uma vez no início e depois só dispara/lê (INIT +
-    FETCh?), sem sobrescrever a configuração recuperada."""
+    (:CONFigure:TOTalize:TIMed + INIT + FETCh?); 'recall' carrega um
+    registro salvo no instrumento (*RCL N) uma vez no início e depois só
+    consulta o resultado mais recente (FETCh?, sem INIT) — respeita
+    totalmente o modo de disparo que já veio configurado no registro
+    recuperado (inclusive se for :INITiate:CONTinuous ON)."""
 
     reading = Signal(str, float)  # timestamp ISO, valor lido
     error = Signal(str)
