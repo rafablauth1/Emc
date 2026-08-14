@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -5,6 +7,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -15,6 +18,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -23,7 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import AUTOMATED_STANDARDS, STANDARDS
-from app.core import planner, templates
+from app.core import planner, project_files, templates
+from app.core.counter_session import CounterWorker
 from app.core.legacy_routines import burst_params_to_points, surge_params_to_points
 from app.core.runtime_settings import settings as runtime_settings
 from app.core.standards import (
@@ -41,6 +46,7 @@ from app.core.standards import (
 )
 from app.core.test_session import TestSessionWorker, set_session_result
 from app.gui.routine_editor import RoutineEditorDialog, describe_point
+from app.instruments.agilent_53131a import Agilent53131ACounter
 from app.instruments.factory import build_driver_for_standard
 
 DEFAULT_PHASE_COMBINATIONS = ["L1-N"]
@@ -90,6 +96,9 @@ class ExecutionView(QWidget):
         self.template_combos: dict[str, QComboBox] = {}
         self._manual_driver = None  # driver conectado manualmente via botão TEST ON
         self._manual_driver_standard: str | None = None
+        self._counter_worker: CounterWorker | None = None
+        self._counter_project_id: int | None = None
+        self._counter_log_path = None
 
         layout = QVBoxLayout(self)
 
@@ -150,7 +159,56 @@ class ExecutionView(QWidget):
         self.log_view.setReadOnly(True)
         layout.addWidget(self.log_view, 1)
 
+        layout.addWidget(self._build_counter_box())
+
         self.refresh_projects()
+
+    def _build_counter_box(self) -> QGroupBox:
+        box = QGroupBox("Contador de Frequência — RTC/Timer (Agilent 53131A)")
+        box_layout = QVBoxLayout(box)
+
+        counter_form = QFormLayout()
+        self.counter_board_spin = QSpinBox()
+        self.counter_board_spin.setRange(0, 15)
+        self.counter_board_spin.setValue(1)
+        counter_form.addRow("Placa GPIB:", self.counter_board_spin)
+
+        self.counter_addr_spin = QSpinBox()
+        self.counter_addr_spin.setRange(0, 30)
+        self.counter_addr_spin.setValue(1)
+        counter_form.addRow("Endereço GPIB:", self.counter_addr_spin)
+
+        self.counter_gate_spin = QDoubleSpinBox()
+        self.counter_gate_spin.setRange(0.1, 3600)
+        self.counter_gate_spin.setValue(30)
+        self.counter_gate_spin.setSuffix(" s")
+        counter_form.addRow("Tempo de gate:", self.counter_gate_spin)
+
+        self.counter_interval_spin = QDoubleSpinBox()
+        self.counter_interval_spin.setRange(0, 3600)
+        self.counter_interval_spin.setValue(30)
+        self.counter_interval_spin.setSuffix(" s")
+        counter_form.addRow("Intervalo entre leituras:", self.counter_interval_spin)
+        box_layout.addLayout(counter_form)
+
+        counter_btn_row = QHBoxLayout()
+        self.counter_start_btn = QPushButton("Iniciar leitura contínua")
+        self.counter_start_btn.clicked.connect(self._start_counter)
+        counter_btn_row.addWidget(self.counter_start_btn)
+        self.counter_stop_btn = QPushButton("Parar")
+        self.counter_stop_btn.setEnabled(False)
+        self.counter_stop_btn.clicked.connect(self._stop_counter)
+        counter_btn_row.addWidget(self.counter_stop_btn)
+        counter_btn_row.addStretch(1)
+        box_layout.addLayout(counter_btn_row)
+
+        self.counter_table = QTableWidget(0, 2)
+        self.counter_table.setHorizontalHeaderLabels(["Data/Hora", "Contagem (RTC)"])
+        self.counter_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.counter_table.setMaximumHeight(180)
+        box_layout.addWidget(self.counter_table)
+
+        return box
 
     # ---- templates (roteiros salvos) ----
 
@@ -752,3 +810,68 @@ class ExecutionView(QWidget):
         item = planner.find_item(project_id, standard_code)
         if item is not None:
             planner.link_item_session(item["id"], session_id)
+
+    # ---- contador de frequência RTC/Timer (Agilent 53131A) ----
+
+    def _start_counter(self) -> None:
+        if self._counter_worker is not None:
+            return
+        project_id = self.project_combo.currentData()
+        if project_id is None:
+            QMessageBox.warning(self, "Contador RTC", "Selecione um projeto antes de iniciar.")
+            return
+
+        counter = Agilent53131ACounter(
+            gpib_address=self.counter_addr_spin.value(),
+            gpib_board=self.counter_board_spin.value(),
+        )
+        self.counter_table.setRowCount(0)
+        self._counter_project_id = project_id
+        self._counter_log_path = None
+
+        self._counter_worker = CounterWorker(
+            counter, self.counter_gate_spin.value(), self.counter_interval_spin.value(), self
+        )
+        self._counter_worker.reading.connect(self._on_counter_reading)
+        self._counter_worker.error.connect(self._on_counter_error)
+        self._counter_worker.stopped.connect(self._on_counter_stopped)
+        self.counter_start_btn.setEnabled(False)
+        self.counter_stop_btn.setEnabled(True)
+        self.counter_board_spin.setEnabled(False)
+        self.counter_addr_spin.setEnabled(False)
+        self.counter_gate_spin.setEnabled(False)
+        self.counter_interval_spin.setEnabled(False)
+        self._counter_worker.start()
+
+    def _stop_counter(self) -> None:
+        if self._counter_worker is not None:
+            self.counter_stop_btn.setEnabled(False)
+            self._counter_worker.request_stop()
+
+    def _on_counter_reading(self, timestamp: str, value: float) -> None:
+        row = self.counter_table.rowCount()
+        self.counter_table.insertRow(row)
+        self.counter_table.setItem(row, 0, QTableWidgetItem(timestamp))
+        self.counter_table.setItem(row, 1, QTableWidgetItem(f"{value:.0f}"))
+        self.counter_table.scrollToBottom()
+
+        if self._counter_project_id is None:
+            return
+        folder = project_files.get_project_folder(self._counter_project_id)
+        if self._counter_log_path is None:
+            name = datetime.now().strftime("contador_rtc_%Y%m%d_%H%M%S.txt")
+            self._counter_log_path = folder / name
+        with open(self._counter_log_path, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | {value:.0f}\n")
+
+    def _on_counter_error(self, message: str) -> None:
+        QMessageBox.warning(self, "Contador RTC", f"Erro na leitura do contador: {message}")
+
+    def _on_counter_stopped(self) -> None:
+        self._counter_worker = None
+        self.counter_start_btn.setEnabled(True)
+        self.counter_stop_btn.setEnabled(False)
+        self.counter_board_spin.setEnabled(True)
+        self.counter_addr_spin.setEnabled(True)
+        self.counter_gate_spin.setEnabled(True)
+        self.counter_interval_spin.setEnabled(True)
