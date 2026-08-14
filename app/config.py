@@ -23,10 +23,12 @@ DEFAULT_GPIB_ADDRESSES = {
     "agilent_53131a": 1,
 }
 
-# Só o contador Agilent 53131A fica numa placa GPIB diferente da 0 (confirmado
-# em campo pelo operador — os outros instrumentos usam sempre GPIB0).
+# Placa GPIB de cada instrumento. Confirmado em campo (NI MAX, PC do
+# laboratório): só existe a placa GPIB0 — abrir uma placa inexistente
+# (ex.: GPIB1, que um script antigo usava numa outra máquina) trava o
+# driver NI-VISA com "access violation" em vez de dar um erro limpo.
 DEFAULT_GPIB_BOARDS = {
-    "agilent_53131a": 1,
+    "agilent_53131a": 0,
 }
 
 DEFAULT_SERIAL_PORTS = {
