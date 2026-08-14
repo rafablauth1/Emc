@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -237,6 +238,12 @@ class PlannerView(QWidget):
 
         overview_box = QGroupBox("Projetos em execução")
         overview_layout = QVBoxLayout(overview_box)
+        overview_btn_row = QHBoxLayout()
+        overview_btn_row.addStretch(1)
+        expand_overview_btn = QPushButton("Expandir visualização (lado a lado)")
+        expand_overview_btn.clicked.connect(self._expand_overview)
+        overview_btn_row.addWidget(expand_overview_btn)
+        overview_layout.addLayout(overview_btn_row)
         self.overview_table = QTableWidget(0, 4)
         self.overview_table.setHorizontalHeaderLabels(["Projeto", "Cliente", "Progresso", ""])
         self.overview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -368,6 +375,66 @@ class PlannerView(QWidget):
         index = self.project_combo.findData(project_id)
         if index >= 0:
             self.project_combo.setCurrentIndex(index)
+
+    def _expand_overview(self) -> None:
+        """Visão lado a lado de todos os projetos em execução, um painel por
+        projeto com o checklist completo — pra comparar o andamento de vários
+        projetos sem precisar trocar no combo um de cada vez."""
+        projects = planner.list_active_projects()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Projetos em execução — lado a lado")
+        dialog.resize(1400, 800)
+        outer_layout = QVBoxLayout(dialog)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        row_layout = QHBoxLayout(container)
+        row_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        order = {code: i for i, code in enumerate(STANDARDS)}
+        if not projects:
+            row_layout.addWidget(QLabel("Nenhum projeto em execução no momento."))
+        for project in projects:
+            panel = QGroupBox(project["name"])
+            panel.setMinimumWidth(320)
+            panel.setMaximumWidth(380)
+            panel_layout = QVBoxLayout(panel)
+            panel_layout.addWidget(QLabel(f"Cliente: {project['client'] or '—'}"))
+
+            items = planner.list_test_items(project["id"])
+            items.sort(key=lambda item: (order.get(item["standard_code"], 999), item["porta"]))
+            table = QTableWidget(len(items), 3)
+            table.setHorizontalHeaderLabels(["Norma", "Linha", "Status"])
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            for row, item in enumerate(items):
+                table.setItem(row, 0, QTableWidgetItem(item["standard_code"]))
+                porta_label = item["porta"]
+                if item.get("tipo_comunicacao"):
+                    porta_label += f" ({item['tipo_comunicacao']})"
+                table.setItem(row, 1, QTableWidgetItem(porta_label))
+                table.setItem(row, 2, QTableWidgetItem(STATUS_LABELS.get(item["status"], item["status"])))
+            panel_layout.addWidget(table)
+
+            open_btn = QPushButton("Abrir este projeto")
+            open_btn.clicked.connect(
+                lambda _checked=False, pid=project["id"], dlg=dialog: self._open_from_dialog(pid, dlg)
+            )
+            panel_layout.addWidget(open_btn)
+
+            row_layout.addWidget(panel)
+
+        scroll.setWidget(container)
+        outer_layout.addWidget(scroll)
+        close_btn = QPushButton("Fechar")
+        close_btn.clicked.connect(dialog.accept)
+        outer_layout.addWidget(close_btn)
+        dialog.exec()
+
+    def _open_from_dialog(self, project_id: int, dialog: QDialog) -> None:
+        self._open_from_overview(project_id)
+        dialog.accept()
 
     def _create_project(self) -> None:
         dialog = _CadastroDialog(self)
