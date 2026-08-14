@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QTabWidget
+from PySide6.QtWidgets import QMainWindow, QScrollArea, QTabWidget, QWidget
 
 from app.gui.energy_registry_view import EnergyRegistryView
 from app.gui.execution_view import ExecutionView
@@ -21,22 +21,36 @@ class MainWindow(QMainWindow):
 
         self.planner_view.run_test_requested.connect(self._go_to_execution)
 
+        # Cada aba fica dentro de um QScrollArea: em telas menores (notebook),
+        # o conteúdo das abas (várias caixas empilhadas) não cabe todo de uma
+        # vez — sem rolagem, o Qt força tudo a caber espremendo o layout, o
+        # que corrompe visualmente o texto. Com scroll, o conteúdo mantém o
+        # tamanho natural e rola em vez de espremer.
+        self._execution_tab = self._scrollable(self.execution_view)
         tabs = QTabWidget()
-        tabs.addTab(self.planner_view, "Planner")
-        tabs.addTab(self.execution_view, "Execução")
-        tabs.addTab(self.energy_registry_view, "Registro de Energia")
-        tabs.addTab(self.reports_view, "Relatórios")
-        tabs.addTab(self.settings_view, "Configurações")
+        tabs.addTab(self._scrollable(self.planner_view), "Planner")
+        tabs.addTab(self._execution_tab, "Execução")
+        tabs.addTab(self._scrollable(self.energy_registry_view), "Registro de Energia")
+        tabs.addTab(self._scrollable(self.reports_view), "Relatórios")
+        tabs.addTab(self._scrollable(self.settings_view), "Configurações")
         tabs.currentChanged.connect(self._on_tab_changed)
         self.tabs = tabs
         self.setCentralWidget(tabs)
 
+    @staticmethod
+    def _scrollable(widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(widget)
+        return scroll
+
     def _go_to_execution(self, project_id: int, standard_code: str) -> None:
         self.execution_view.preselect(project_id, standard_code)
-        self.tabs.setCurrentWidget(self.execution_view)
+        self.tabs.setCurrentWidget(self._execution_tab)
 
     def _on_tab_changed(self, index: int) -> None:
-        widget = self.tabs.widget(index)
+        container = self.tabs.widget(index)
+        widget = container.widget() if isinstance(container, QScrollArea) else container
         if widget is self.execution_view:
             self.execution_view.refresh_projects()
         elif widget is self.energy_registry_view:
