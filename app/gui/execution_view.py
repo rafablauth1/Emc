@@ -200,7 +200,17 @@ class ExecutionView(QWidget):
         self.counter_interval_spin.setValue(30)
         self.counter_interval_spin.setSuffix(" s")
         counter_form.addRow("Intervalo entre leituras:", self.counter_interval_spin)
+        self._counter_interval_label = counter_form.labelForField(self.counter_interval_spin)
         box_layout.addLayout(counter_form)
+
+        self.counter_recall_hint = QLabel(
+            "No modo Recall não precisa configurar tempo nem intervalo — o app "
+            "escuta o instrumento continuamente e registra sozinho toda vez que "
+            "o valor mudar."
+        )
+        self.counter_recall_hint.setWordWrap(True)
+        self.counter_recall_hint.setVisible(False)
+        box_layout.addWidget(self.counter_recall_hint)
 
         counter_btn_row = QHBoxLayout()
         self.counter_start_btn = QPushButton("Iniciar leitura contínua")
@@ -842,11 +852,14 @@ class ExecutionView(QWidget):
         self.counter_file_label.setText("Aguardando a primeira leitura...")
 
         mode = self.counter_mode_combo.currentData()
-        recall_register = self.counter_recall_spin.value() if mode == "recall" else None
+        is_recall = mode == "recall"
+        recall_register = self.counter_recall_spin.value() if is_recall else None
+        gate_time = None if is_recall else self.counter_gate_spin.value()
+        interval = None if is_recall else self.counter_interval_spin.value()
         self._counter_worker = CounterWorker(
             counter,
-            self.counter_gate_spin.value(),
-            self.counter_interval_spin.value(),
+            gate_time,
+            interval,
             mode=mode,
             recall_register=recall_register,
             parent=self,
@@ -866,7 +879,11 @@ class ExecutionView(QWidget):
         is_recall = self.counter_mode_combo.currentData() == "recall"
         self.counter_recall_spin.setVisible(is_recall)
         self._counter_recall_label.setVisible(is_recall)
-        self._counter_gate_label.setText("Tempo de espera antes de ler:" if is_recall else "Tempo de gate:")
+        self.counter_gate_spin.setVisible(not is_recall)
+        self._counter_gate_label.setVisible(not is_recall)
+        self.counter_interval_spin.setVisible(not is_recall)
+        self._counter_interval_label.setVisible(not is_recall)
+        self.counter_recall_hint.setVisible(is_recall)
 
     def _stop_counter(self) -> None:
         if self._counter_worker is not None:

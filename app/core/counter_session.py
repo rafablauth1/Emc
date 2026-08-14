@@ -10,12 +10,15 @@ class CounterWorker(QThread):
     """Roda a leitura contínua do contador Agilent 53131A em thread separada,
     pra não travar a tela durante os gates longos (podem levar minutos).
 
-    Dois modos: 'manual' configura o instrumento pelo app a cada leitura
-    (:CONFigure:TOTalize:TIMed + INIT + FETCh?); 'recall' carrega um
-    registro salvo no instrumento (*RCL N) uma vez no início e depois só
-    consulta o resultado mais recente (FETCh?, sem INIT) — respeita
-    totalmente o modo de disparo que já veio configurado no registro
-    recuperado (inclusive se for :INITiate:CONTinuous ON)."""
+    Dois modos, com lógicas bem diferentes:
+    - 'manual': o app configura o instrumento a cada leitura (:CONFigure:
+      TOTalize:TIMed + INIT), espera gate_time_s e lê com FETCh?, repetindo
+      a cada interval_s.
+    - 'recall': carrega um registro salvo no instrumento (*RCL N) uma vez no
+      início e depois só "escuta" — consulta FETCh? em polling curto, sem
+      mandar INIT nenhum (respeita o modo de disparo que já veio no
+      registro, inclusive se for :INITiate:CONTinuous ON) — e só registra
+      quando o valor lido muda, sem precisar configurar tempo/intervalo."""
 
     reading = Signal(str, float)  # timestamp ISO, valor lido
     error = Signal(str)
@@ -24,8 +27,8 @@ class CounterWorker(QThread):
     def __init__(
         self,
         counter: Agilent53131ACounter,
-        gate_time_s: float,
-        interval_s: float,
+        gate_time_s: float | None = None,
+        interval_s: float | None = None,
         mode: str = "manual",
         recall_register: int | None = None,
         parent=None,
@@ -52,27 +55,46 @@ class CounterWorker(QThread):
             return
 
         try:
-            while not self._stop_requested:
-                try:
-                    if self.mode == "recall":
-                        value = self.counter.read_current(self.gate_time_s)
-                    else:
-                        value = self.counter.read_totalize(self.gate_time_s)
-                except Exception as exc:
-                    self.error.emit(str(exc))
-                    break
-                if self._stop_requested:
-                    break
-                timestamp = datetime.now().isoformat(timespec="seconds")
-                self.reading.emit(timestamp, value)
-
-                waited = 0.0
-                while waited < self.interval_s and not self._stop_requested:
-                    time.sleep(0.1)
-                    waited += 0.1
+            if self.mode == "recall":
+                self._run_recall_loop()
+            else:
+                self._run_manual_loop()
         finally:
             self.counter.disconnect()
             self.stopped.emit()
+
+    def _run_manual_loop(self) -> None:
+        while not self._stop_requested:
+            try:
+                value = self.counter.read_totalize(self.gate_time_s)
+            except Exception as exc:
+                self.error.emit(str(exc))
+                break
+            if self._stop_requested:
+                break
+            timestamp = datetime.now().isoformat(timespec="seconds")
+            self.reading.emit(timestamp, value)
+
+            waited = 0.0
+            while waited < self.interval_s and not self._stop_requested:
+                time.sleep(0.1)
+                waited += 0.1
+
+    def _run_recall_loop(self) -> None:
+        last_value = None
+        while not self._stop_requested:
+            try:
+                value = self.counter.try_read_current()
+            except Exception as exc:
+                self.error.emit(str(exc))
+                break
+            if value is not None and value != last_value:
+                last_value = value
+                timestamp = datetime.now().isoformat(timespec="seconds")
+                self.reading.emit(timestamp, value)
+            if self._stop_requested:
+                break
+            time.sleep(0.2)
 
 
 class RecallWorker(QThread):

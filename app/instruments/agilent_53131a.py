@@ -101,14 +101,28 @@ class Agilent53131ACounter:
         value = self._inst.query(":FETCh?")
         return float(value)
 
-    def read_current(self, wait_s: float) -> float:
-        """Lê o resultado mais recente usando a configuração ATUALMENTE ativa
-        no instrumento (a que veio de um Recall, ou a que já estava
-        configurada no painel) — sem mandar INIT. Configurações recuperadas
-        por Recall costumam já estar disparando sozinhas (:INITiate:
-        CONTinuous ON); mandar INIT nessa hora conflita com isso e o
-        instrumento recusa com o erro SCPI -213 'Init ignored'. wait_s é
-        quanto esperar antes de consultar o resultado."""
-        time.sleep(wait_s)
-        value = self._inst.query(":FETCh?")
-        return float(value)
+    def try_read_current(self, poll_timeout_ms: int = 2000) -> float | None:
+        """Tenta ler o resultado mais recente usando a configuração ATUALMENTE
+        ativa no instrumento (a que veio de um Recall, ou a que já estava
+        configurada no painel) — sem mandar INIT algum. Usado no modo Recall
+        pra 'escutar' o instrumento continuamente: como o registro recuperado
+        pode estar disparando sozinho (:INITiate:CONTinuous ON) num ritmo
+        desconhecido pelo app, cada tentativa usa um timeout curto — se o
+        instrumento ainda não tem um resultado pronto, retorna None (quem
+        chamou tenta de novo depois) em vez de estourar um erro de timeout.
+        Outros erros reais (barramento, etc.) continuam sendo levantados."""
+        if self.simulate:
+            return float(self._inst.query(":FETCh?"))
+
+        import pyvisa
+
+        original_timeout = self._inst.timeout
+        self._inst.timeout = poll_timeout_ms
+        try:
+            return float(self._inst.query(":FETCh?"))
+        except pyvisa.errors.VisaIOError as exc:
+            if exc.error_code == pyvisa.constants.StatusCode.error_timeout:
+                return None
+            raise
+        finally:
+            self._inst.timeout = original_timeout
