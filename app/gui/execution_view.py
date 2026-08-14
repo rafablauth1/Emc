@@ -219,6 +219,9 @@ class ExecutionView(QWidget):
         self.counter_table.setMaximumHeight(180)
         box_layout.addWidget(self.counter_table)
 
+        self.counter_file_label = QLabel("Nenhuma leitura salva ainda nesta sessão.")
+        box_layout.addWidget(self.counter_file_label)
+
         return box
 
     # ---- templates (roteiros salvos) ----
@@ -836,6 +839,7 @@ class ExecutionView(QWidget):
         self.counter_table.setRowCount(0)
         self._counter_project_id = project_id
         self._counter_log_path = None
+        self.counter_file_label.setText("Aguardando a primeira leitura...")
 
         mode = self.counter_mode_combo.currentData()
         recall_register = self.counter_recall_spin.value() if mode == "recall" else None
@@ -884,12 +888,15 @@ class ExecutionView(QWidget):
             self._counter_log_path = folder / name
         with open(self._counter_log_path, "a", encoding="utf-8") as f:
             f.write(f"{timestamp} | {value:.0f}\n")
+        self.counter_file_label.setText(f"Salvando em: {self._counter_log_path.name}")
 
     def _on_counter_error(self, message: str) -> None:
         QMessageBox.warning(self, "Contador RTC", f"Erro na leitura do contador: {message}")
 
     def _on_counter_stopped(self) -> None:
         self._counter_worker = None
+        if self._counter_log_path is not None:
+            self.counter_file_label.setText(f"Salvo em: {self._counter_log_path.name}")
         self.counter_start_btn.setEnabled(True)
         self.counter_stop_btn.setEnabled(False)
         self.counter_mode_combo.setEnabled(True)
