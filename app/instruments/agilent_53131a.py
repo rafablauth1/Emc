@@ -21,11 +21,7 @@ class _SimulatedCounterTransport:
         cmd = command.strip().upper()
         if cmd.startswith("*IDN?"):
             return "Agilent Technologies,53131A,SIM00000,SIM-3.0"
-        if (
-            cmd.startswith(":MEAS:TOT")
-            or cmd.startswith(":MEASURE:TOTALIZE")
-            or cmd.startswith(":FETC")
-        ):
+        if cmd.startswith(":FETC"):
             value = self._base_count + random.randint(-5, 5)
             return f"{value:+.5E}"
         return "0"
@@ -39,10 +35,11 @@ class Agilent53131ACounter:
     ensaio de RTC/Timer (mede a contagem total de pulsos do oscilador do
     medidor durante um tempo de gate fixo — :CONFigure:TOTalize:TIMed).
 
-    Sequência de comandos idêntica ao script que já funciona em campo
+    Sequência de comandos baseada no script validado em campo
     (TIMER_RTC_TESTE.py): configura o gate, dispara com INIT, aguarda o gate
-    terminar e só então consulta o resultado — não altera a lógica GPIB
-    validada, só encapsula pra uso dentro do app.
+    terminar e só então consulta o resultado. Confirmado em campo (erro SCPI
+    -213 "Init ignored") que a leitura final precisa ser :FETCh? — não
+    :MEASure:...? — porque esse último dispara outro INIT por dentro.
     """
 
     def __init__(
@@ -90,13 +87,18 @@ class Agilent53131ACounter:
 
     def read_totalize(self, gate_time_s: float) -> float:
         """Configura e mede a contagem total de pulsos durante gate_time_s
-        segundos (mesma sequência do script validado em campo: CONFigure +
-        INIT + aguarda o gate + consulta o resultado). Modo 'configuração
-        manual' — sobrescreve qualquer configuração carregada por Recall."""
+        segundos: CONFigure + INIT + aguarda o gate + FETCh? (consulta só o
+        resultado, sem disparar outro INIT). Modo 'configuração manual' —
+        sobrescreve qualquer configuração carregada por Recall.
+
+        Usa FETCh? em vez de :MEASure:TOTalize:TIMed? porque esse último já
+        faz seu próprio INIT por dentro (é um comando "configura+dispara+lê"
+        combinado) — encadeado depois de um INIT manual, o instrumento recusa
+        o segundo INIT com o erro SCPI -213 "Init ignored"."""
         self._inst.write(f":CONFigure:TOTalize:TIMed {gate_time_s}")
         self._inst.write("INIT")
         time.sleep(gate_time_s + 0.2)
-        value = self._inst.query(":MEASure:TOTalize:TIMed?")
+        value = self._inst.query(":FETCh?")
         return float(value)
 
     def read_current(self, wait_s: float) -> float:
