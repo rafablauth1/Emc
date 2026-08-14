@@ -1,4 +1,7 @@
-from PySide6.QtCore import QDate, Qt, Signal
+import os
+from pathlib import Path
+
+from PySide6.QtCore import QDate, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -12,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -21,8 +25,33 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import AUTOMATED_STANDARDS, STANDARDS
-from app.core import energy_registry, planner
+from app.core import energy_registry, planner, project_files
 from app.core.planner import COMM_LINE_ELIGIBLE_STANDARDS, ORIGEM_DISPLAY, ORIGEM_SOFTWARE
+
+
+class _FileSearchWorker(QThread):
+    """Vasculha o PC inteiro (em background, pra não travar a tela) por
+    arquivos .txt gerados por outro software com o padrão de nome
+    '{protocolo}_...'."""
+
+    progress = Signal(str)
+    finished_search = Signal(list)
+
+    def __init__(self, protocolo: str, parent=None):
+        super().__init__(parent)
+        self.protocolo = protocolo
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        results = project_files.find_matching_files(
+            self.protocolo,
+            stop_flag=lambda: self._stop,
+            on_progress=lambda path: self.progress.emit(path),
+        )
+        self.finished_search.emit(results)
 
 STATUS_OPTIONS = ["pendente", "andamento", "concluido"]
 STATUS_LABELS = {"pendente": "Pendente", "andamento": "Em andamento", "concluido": "Concluído"}
@@ -292,6 +321,24 @@ class PlannerView(QWidget):
             self.cadastro_labels[field] = value_label
         layout.addWidget(cadastro_box)
 
+        files_box = QGroupBox("Arquivos do projeto (gerados pelo protocolo)")
+        files_layout = QVBoxLayout(files_box)
+        files_btn_row = QHBoxLayout()
+        open_folder_btn = QPushButton("Abrir pasta do projeto")
+        open_folder_btn.clicked.connect(self._open_project_folder)
+        files_btn_row.addWidget(open_folder_btn)
+        import_files_btn = QPushButton("Importar arquivos (buscar no PC)")
+        import_files_btn.clicked.connect(self._import_files)
+        files_btn_row.addWidget(import_files_btn)
+        files_btn_row.addStretch(1)
+        files_layout.addLayout(files_btn_row)
+        self.files_table = QTableWidget(0, 1)
+        self.files_table.setHorizontalHeaderLabels(["Arquivo"])
+        self.files_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.files_table.setMaximumHeight(120)
+        files_layout.addWidget(self.files_table)
+        layout.addWidget(files_box)
+
         checklist_box = QGroupBox("Checklist de ensaios")
         checklist_layout = QVBoxLayout(checklist_box)
         self.checklist_table = QTableWidget(0, 6)
@@ -350,6 +397,7 @@ class PlannerView(QWidget):
             self._load_cadastro_summary()
             self._load_checklist()
             self._load_project_status()
+            self._load_project_files()
 
     def refresh_overview(self) -> None:
         projects = planner.list_active_projects()
@@ -485,6 +533,7 @@ class PlannerView(QWidget):
         self._load_cadastro_summary()
         self._load_checklist()
         self._load_project_status()
+        self._load_project_files()
 
     def _load_project_status(self) -> None:
         project = planner.get_project(self.current_project_id) if self.current_project_id else None
@@ -525,6 +574,108 @@ class PlannerView(QWidget):
         for field, label_widget in self.cadastro_labels.items():
             value = (project or {}).get(field, "") or "—"
             label_widget.setText(value)
+
+    def _load_project_files(self) -> None:
+        self.files_table.setRowCount(0)
+        if self.current_project_id is None:
+            return
+        files = project_files.list_project_files(self.current_project_id)
+        self.files_table.setRowCount(len(files))
+        for row, path in enumerate(files):
+            item = QTableWidgetItem(path.name)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.files_table.setItem(row, 0, item)
+
+    def _open_project_folder(self) -> None:
+        if self.current_project_id is None:
+            QMessageBox.warning(self, "Pasta do projeto", "Selecione um projeto primeiro.")
+            return
+        folder = project_files.get_project_folder(self.current_project_id)
+        os.startfile(str(folder))
+
+    def _import_files(self) -> None:
+        if self.current_project_id is None:
+            QMessageBox.warning(self, "Importar arquivos", "Selecione um projeto primeiro.")
+            return
+        project = planner.get_project(self.current_project_id)
+        protocolo = (project.get("protocolo") or "").strip() if project else ""
+        if not protocolo:
+            QMessageBox.warning(
+                self,
+                "Importar arquivos",
+                "Preencha o campo \"Protocolo\" no Cadastro deste projeto antes de importar — "
+                "é ele que identifica quais arquivos (ex.: PROTOCOLO_4-19_120V.txt) pertencem a este projeto.",
+            )
+            return
+
+        progress = QProgressDialog("Buscando arquivos no PC...", "Cancelar", 0, 0, self)
+        progress.setWindowTitle("Importar arquivos")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker = _FileSearchWorker(protocolo, self)
+        worker.progress.connect(lambda path: progress.setLabelText(f"Buscando...\n{path}"))
+
+        def on_finished(results: list) -> None:
+            progress.close()
+            self._file_search_worker = None
+            self._show_import_results(results)
+
+        worker.finished_search.connect(on_finished)
+        progress.canceled.connect(worker.stop)
+        self._file_search_worker = worker  # mantém referência viva enquanto a busca roda
+        worker.start()
+        progress.show()
+
+    def _show_import_results(self, results: list[Path]) -> None:
+        if not results:
+            QMessageBox.information(
+                self, "Importar arquivos", "Nenhum arquivo encontrado no PC com esse protocolo."
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{len(results)} arquivo(s) encontrado(s)")
+        dialog.resize(720, 420)
+        dlg_layout = QVBoxLayout(dialog)
+        dlg_layout.addWidget(QLabel("Selecione os arquivos que devem ser MOVIDOS pra pasta do projeto:"))
+
+        table = QTableWidget(len(results), 2)
+        table.setHorizontalHeaderLabels(["", "Caminho encontrado"])
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for row, path in enumerate(results):
+            check_item = QTableWidgetItem()
+            check_item.setFlags(check_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            check_item.setCheckState(Qt.CheckState.Checked)
+            table.setItem(row, 0, check_item)
+            path_item = QTableWidgetItem(str(path))
+            path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 1, path_item)
+        dlg_layout.addWidget(table, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Mover arquivos selecionados")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dlg_layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        selected_paths = [
+            Path(table.item(row, 1).text())
+            for row in range(table.rowCount())
+            if table.item(row, 0).checkState() == Qt.CheckState.Checked
+        ]
+        if not selected_paths:
+            return
+        moved, skipped = project_files.move_files_to_project(self.current_project_id, selected_paths)
+        self._load_project_files()
+        message = f"{moved} arquivo(s) movido(s) pra pasta do projeto."
+        if skipped:
+            message += f"\n{skipped} ignorado(s) (já existia arquivo igual no destino, ou não encontrado)."
+        QMessageBox.information(self, "Importar arquivos", message)
 
     def _load_checklist(self) -> None:
         self.checklist_table.setRowCount(0)

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.config import STANDARDS
+from app.core import project_files
 from app.core.db import db_cursor
 
 # Ensaios que costumam ter uma linha de comunicação separada da linha de
@@ -77,6 +78,7 @@ def create_project(
                        VALUES (?, ?, ?, ?, 'pendente')""",
                     (project_id, standard_code, porta, tipo_comunicacao),
                 )
+    project_files.get_project_folder(project_id)
     return project_id
 
 
