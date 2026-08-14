@@ -20,6 +20,13 @@ SIMULATION_MODE = True
 DEFAULT_GPIB_ADDRESSES = {
     "ucs500n": 6,
     "chroma": 1,
+    "agilent_53131a": 1,
+}
+
+# Só o contador Agilent 53131A fica numa placa GPIB diferente da 0 (confirmado
+# em campo pelo operador — os outros instrumentos usam sempre GPIB0).
+DEFAULT_GPIB_BOARDS = {
+    "agilent_53131a": 1,
 }
 
 DEFAULT_SERIAL_PORTS = {

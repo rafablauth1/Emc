@@ -46,8 +46,7 @@ from app.core.standards import (
 )
 from app.core.test_session import TestSessionWorker, set_session_result
 from app.gui.routine_editor import RoutineEditorDialog, describe_point
-from app.instruments.agilent_53131a import Agilent53131ACounter
-from app.instruments.factory import build_driver_for_standard
+from app.instruments.factory import build_agilent_counter_driver, build_driver_for_standard
 
 DEFAULT_PHASE_COMBINATIONS = ["L1-N"]
 
@@ -167,22 +166,34 @@ class ExecutionView(QWidget):
         box = QGroupBox("Contador de Frequência — RTC/Timer (Agilent 53131A)")
         box_layout = QVBoxLayout(box)
 
-        counter_form = QFormLayout()
-        self.counter_board_spin = QSpinBox()
-        self.counter_board_spin.setRange(0, 15)
-        self.counter_board_spin.setValue(1)
-        counter_form.addRow("Placa GPIB:", self.counter_board_spin)
+        box_layout.addWidget(
+            QLabel(
+                "Placa/endereço GPIB configurados em Configurações. Aqui só o tempo de "
+                "gate e o intervalo entre leituras, que são específicos de cada sessão."
+            )
+        )
 
-        self.counter_addr_spin = QSpinBox()
-        self.counter_addr_spin.setRange(0, 30)
-        self.counter_addr_spin.setValue(1)
-        counter_form.addRow("Endereço GPIB:", self.counter_addr_spin)
+        counter_form = QFormLayout()
+        self.counter_mode_combo = QComboBox()
+        self.counter_mode_combo.addItem("Configuração manual (app configura o gate)", "manual")
+        self.counter_mode_combo.addItem("Via Recall (usa config. já salva no instrumento)", "recall")
+        self.counter_mode_combo.currentIndexChanged.connect(self._on_counter_mode_changed)
+        counter_form.addRow("Modo:", self.counter_mode_combo)
+
+        self.counter_recall_spin = QSpinBox()
+        self.counter_recall_spin.setRange(0, 20)
+        self.counter_recall_spin.setValue(1)
+        self.counter_recall_spin.setVisible(False)
+        counter_form.addRow("Registro de Recall:", self.counter_recall_spin)
+        self._counter_recall_label = counter_form.labelForField(self.counter_recall_spin)
+        self._counter_recall_label.setVisible(False)
 
         self.counter_gate_spin = QDoubleSpinBox()
         self.counter_gate_spin.setRange(0.1, 3600)
         self.counter_gate_spin.setValue(30)
         self.counter_gate_spin.setSuffix(" s")
         counter_form.addRow("Tempo de gate:", self.counter_gate_spin)
+        self._counter_gate_label = counter_form.labelForField(self.counter_gate_spin)
 
         self.counter_interval_spin = QDoubleSpinBox()
         self.counter_interval_spin.setRange(0, 3600)
@@ -821,27 +832,37 @@ class ExecutionView(QWidget):
             QMessageBox.warning(self, "Contador RTC", "Selecione um projeto antes de iniciar.")
             return
 
-        counter = Agilent53131ACounter(
-            gpib_address=self.counter_addr_spin.value(),
-            gpib_board=self.counter_board_spin.value(),
-        )
+        counter = build_agilent_counter_driver()
         self.counter_table.setRowCount(0)
         self._counter_project_id = project_id
         self._counter_log_path = None
 
+        mode = self.counter_mode_combo.currentData()
+        recall_register = self.counter_recall_spin.value() if mode == "recall" else None
         self._counter_worker = CounterWorker(
-            counter, self.counter_gate_spin.value(), self.counter_interval_spin.value(), self
+            counter,
+            self.counter_gate_spin.value(),
+            self.counter_interval_spin.value(),
+            mode=mode,
+            recall_register=recall_register,
+            parent=self,
         )
         self._counter_worker.reading.connect(self._on_counter_reading)
         self._counter_worker.error.connect(self._on_counter_error)
         self._counter_worker.stopped.connect(self._on_counter_stopped)
         self.counter_start_btn.setEnabled(False)
         self.counter_stop_btn.setEnabled(True)
-        self.counter_board_spin.setEnabled(False)
-        self.counter_addr_spin.setEnabled(False)
+        self.counter_mode_combo.setEnabled(False)
+        self.counter_recall_spin.setEnabled(False)
         self.counter_gate_spin.setEnabled(False)
         self.counter_interval_spin.setEnabled(False)
         self._counter_worker.start()
+
+    def _on_counter_mode_changed(self, _index: int) -> None:
+        is_recall = self.counter_mode_combo.currentData() == "recall"
+        self.counter_recall_spin.setVisible(is_recall)
+        self._counter_recall_label.setVisible(is_recall)
+        self._counter_gate_label.setText("Tempo de espera antes de ler:" if is_recall else "Tempo de gate:")
 
     def _stop_counter(self) -> None:
         if self._counter_worker is not None:
@@ -871,7 +892,7 @@ class ExecutionView(QWidget):
         self._counter_worker = None
         self.counter_start_btn.setEnabled(True)
         self.counter_stop_btn.setEnabled(False)
-        self.counter_board_spin.setEnabled(True)
-        self.counter_addr_spin.setEnabled(True)
+        self.counter_mode_combo.setEnabled(True)
+        self.counter_recall_spin.setEnabled(True)
         self.counter_gate_spin.setEnabled(True)
         self.counter_interval_spin.setEnabled(True)

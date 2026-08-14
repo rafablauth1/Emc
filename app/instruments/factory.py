@@ -1,4 +1,5 @@
 from app.core.runtime_settings import settings
+from app.instruments.agilent_53131a import Agilent53131ACounter
 from app.instruments.chroma_615xx import Chroma615xxDriver
 from app.instruments.transport import SimulatedTransport, VisaTransport, gpib_resource
 from app.instruments.ucs500n import UCS500NDriver
@@ -18,6 +19,14 @@ def build_chroma_driver() -> Chroma615xxDriver:
     else:
         transport = VisaTransport("Chroma61501", gpib_resource(settings.gpib_addresses["chroma"]))
     return Chroma615xxDriver(transport)
+
+
+def build_agilent_counter_driver() -> Agilent53131ACounter:
+    return Agilent53131ACounter(
+        gpib_address=settings.gpib_addresses["agilent_53131a"],
+        gpib_board=settings.gpib_boards["agilent_53131a"],
+        simulate=settings.simulation_mode,
+    )
 
 
 def build_driver_for_standard(standard_code: str):

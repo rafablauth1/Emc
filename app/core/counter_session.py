@@ -8,7 +8,12 @@ from app.instruments.agilent_53131a import Agilent53131ACounter
 
 class CounterWorker(QThread):
     """Roda a leitura contínua do contador Agilent 53131A em thread separada,
-    pra não travar a tela durante os gates longos (podem levar minutos)."""
+    pra não travar a tela durante os gates longos (podem levar minutos).
+
+    Dois modos: 'manual' configura o instrumento pelo app a cada leitura
+    (:CONFigure:TOTalize:TIMed); 'recall' carrega um registro salvo no
+    instrumento (*RCL N) uma vez no início e depois só dispara/lê (INIT +
+    FETCh?), sem sobrescrever a configuração recuperada."""
 
     reading = Signal(str, float)  # timestamp ISO, valor lido
     error = Signal(str)
@@ -19,12 +24,16 @@ class CounterWorker(QThread):
         counter: Agilent53131ACounter,
         gate_time_s: float,
         interval_s: float,
+        mode: str = "manual",
+        recall_register: int | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self.counter = counter
         self.gate_time_s = gate_time_s
         self.interval_s = interval_s
+        self.mode = mode
+        self.recall_register = recall_register
         self._stop_requested = False
 
     def request_stop(self) -> None:
@@ -33,6 +42,8 @@ class CounterWorker(QThread):
     def run(self) -> None:
         try:
             self.counter.connect()
+            if self.mode == "recall" and self.recall_register is not None:
+                self.counter.recall(self.recall_register)
         except Exception as exc:
             self.error.emit(str(exc))
             self.stopped.emit()
@@ -41,7 +52,10 @@ class CounterWorker(QThread):
         try:
             while not self._stop_requested:
                 try:
-                    value = self.counter.read_totalize(self.gate_time_s)
+                    if self.mode == "recall":
+                        value = self.counter.read_current(self.gate_time_s)
+                    else:
+                        value = self.counter.read_totalize(self.gate_time_s)
                 except Exception as exc:
                     self.error.emit(str(exc))
                     break
@@ -57,3 +71,25 @@ class CounterWorker(QThread):
         finally:
             self.counter.disconnect()
             self.stopped.emit()
+
+
+class RecallWorker(QThread):
+    """Conecta no contador, carrega um registro de Recall salvo (*RCL N) e
+    desconecta — em thread separada pra não travar a tela."""
+
+    result = Signal(bool, str)
+
+    def __init__(self, counter: Agilent53131ACounter, register: int, parent=None):
+        super().__init__(parent)
+        self.counter = counter
+        self.register = register
+
+    def run(self) -> None:
+        try:
+            self.counter.connect()
+            self.counter.recall(self.register)
+            self.result.emit(True, f"Recall {self.register} carregado.")
+        except Exception as exc:
+            self.result.emit(False, str(exc))
+        finally:
+            self.counter.disconnect()

@@ -14,9 +14,14 @@ from PySide6.QtWidgets import (
 
 from app.core import command_overrides
 from app.core.comm_test import CommTestWorker
+from app.core.counter_session import RecallWorker
 from app.core.runtime_settings import settings
 from app.instruments import ucs500n_commands as ucs_cmd
-from app.instruments.factory import build_chroma_driver, build_ucs500n_driver
+from app.instruments.factory import (
+    build_agilent_counter_driver,
+    build_chroma_driver,
+    build_ucs500n_driver,
+)
 
 UCS500N_COMMAND_FIELDS = [
     ("SELECT_BURST_MENU", "Selecionar menu Burst"),
@@ -42,6 +47,7 @@ class SettingsView(QWidget):
         super().__init__(parent)
         self._comm_test_workers: dict[str, CommTestWorker] = {}
         self._terminal_driver = None
+        self._recall_worker: RecallWorker | None = None
         layout = QVBoxLayout(self)
 
         self.sim_checkbox = QCheckBox("Modo simulado (sem hardware GPIB)")
@@ -83,6 +89,22 @@ class SettingsView(QWidget):
             lambda v: settings.gpib_addresses.__setitem__("chroma", v)
         )
         form.addRow("Endereço GPIB — Chroma 61501/61504:", self.chroma_addr_spin)
+
+        self.counter_board_spin = QSpinBox()
+        self.counter_board_spin.setRange(0, 15)
+        self.counter_board_spin.setValue(settings.gpib_boards["agilent_53131a"])
+        self.counter_board_spin.valueChanged.connect(
+            lambda v: settings.gpib_boards.__setitem__("agilent_53131a", v)
+        )
+        form.addRow("Placa GPIB — Contador Agilent 53131A:", self.counter_board_spin)
+
+        self.counter_addr_spin = QSpinBox()
+        self.counter_addr_spin.setRange(0, 30)
+        self.counter_addr_spin.setValue(settings.gpib_addresses["agilent_53131a"])
+        self.counter_addr_spin.valueChanged.connect(
+            lambda v: settings.gpib_addresses.__setitem__("agilent_53131a", v)
+        )
+        form.addRow("Endereço GPIB — Contador Agilent 53131A:", self.counter_addr_spin)
         layout.addLayout(form)
 
         layout.addWidget(QLabel("Teste de comunicação GPIB (connect + *IDN?):"))
@@ -103,6 +125,29 @@ class SettingsView(QWidget):
         chroma_test_row.addWidget(self.chroma_test_status, 1)
         layout.addLayout(chroma_test_row)
 
+        counter_test_row = QHBoxLayout()
+        counter_test_btn = QPushButton("Testar comunicação — Contador Agilent 53131A")
+        counter_test_btn.clicked.connect(
+            lambda: self._test_comm("agilent_53131a", build_agilent_counter_driver)
+        )
+        self.counter_test_status = QLabel("")
+        counter_test_row.addWidget(counter_test_btn)
+        counter_test_row.addWidget(self.counter_test_status, 1)
+        layout.addLayout(counter_test_row)
+
+        recall_row = QHBoxLayout()
+        recall_row.addWidget(QLabel("Recall do contador (Save/Recall > Recall N no painel):"))
+        self.recall_register_spin = QSpinBox()
+        self.recall_register_spin.setRange(0, 20)
+        self.recall_register_spin.setValue(1)
+        recall_row.addWidget(self.recall_register_spin)
+        recall_btn = QPushButton("Carregar Recall")
+        recall_btn.clicked.connect(self._load_recall)
+        recall_row.addWidget(recall_btn)
+        self.recall_status = QLabel("")
+        recall_row.addWidget(self.recall_status, 1)
+        layout.addLayout(recall_row)
+
         layout.addWidget(
             QLabel(
                 "Terminal GPIB (comando bruto) — pra descobrir/testar os comandos reais de um "
@@ -114,6 +159,7 @@ class SettingsView(QWidget):
         self.terminal_instrument_combo = QComboBox()
         self.terminal_instrument_combo.addItem("EM TEST UCS 500N", "ucs500n")
         self.terminal_instrument_combo.addItem("Chroma 61501/61504", "chroma")
+        self.terminal_instrument_combo.addItem("Contador Agilent 53131A", "agilent_53131a")
         terminal_top_row.addWidget(self.terminal_instrument_combo)
         self.terminal_connect_btn = QPushButton("Conectar")
         self.terminal_connect_btn.setCheckable(True)
@@ -180,7 +226,12 @@ class SettingsView(QWidget):
         settings.buzzer_enabled = checked
 
     def _test_comm(self, instrument: str, driver_factory) -> None:
-        status_label = self.ucs_test_status if instrument == "ucs500n" else self.chroma_test_status
+        status_labels = {
+            "ucs500n": self.ucs_test_status,
+            "chroma": self.chroma_test_status,
+            "agilent_53131a": self.counter_test_status,
+        }
+        status_label = status_labels[instrument]
         status_label.setStyleSheet("")
         status_label.setText("Testando...")
         worker = CommTestWorker(driver_factory)
@@ -196,6 +247,26 @@ class SettingsView(QWidget):
             status_label.setStyleSheet("color: red;")
             status_label.setText(f"Falhou — {message}")
 
+    # ---- recall do contador Agilent 53131A ----
+
+    def _load_recall(self) -> None:
+        self.recall_status.setStyleSheet("")
+        self.recall_status.setText("Carregando...")
+        counter = build_agilent_counter_driver()
+        worker = RecallWorker(counter, self.recall_register_spin.value(), self)
+        worker.result.connect(self._on_recall_result)
+        self._recall_worker = worker
+        worker.start()
+
+    def _on_recall_result(self, ok: bool, message: str) -> None:
+        self._recall_worker = None
+        if ok:
+            self.recall_status.setStyleSheet("color: green;")
+            self.recall_status.setText(message)
+        else:
+            self.recall_status.setStyleSheet("color: red;")
+            self.recall_status.setText(f"Falhou — {message}")
+
     # ---- terminal GPIB (comando bruto) ----
 
     def _terminal_log_line(self, text: str) -> None:
@@ -204,7 +275,12 @@ class SettingsView(QWidget):
     def _toggle_terminal_connection(self, checked: bool) -> None:
         if checked:
             instrument = self.terminal_instrument_combo.currentData()
-            factory = build_ucs500n_driver if instrument == "ucs500n" else build_chroma_driver
+            factories = {
+                "ucs500n": build_ucs500n_driver,
+                "chroma": build_chroma_driver,
+                "agilent_53131a": build_agilent_counter_driver,
+            }
+            factory = factories[instrument]
             try:
                 driver = factory()
                 driver.connect()

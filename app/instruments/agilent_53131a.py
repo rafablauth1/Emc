@@ -21,7 +21,11 @@ class _SimulatedCounterTransport:
         cmd = command.strip().upper()
         if cmd.startswith("*IDN?"):
             return "Agilent Technologies,53131A,SIM00000,SIM-3.0"
-        if cmd.startswith(":MEAS:TOT") or cmd.startswith(":MEASURE:TOTALIZE"):
+        if (
+            cmd.startswith(":MEAS:TOT")
+            or cmd.startswith(":MEASURE:TOTALIZE")
+            or cmd.startswith(":FETC")
+        ):
             value = self._base_count + random.randint(-5, 5)
             return f"{value:+.5E}"
         return "0"
@@ -79,12 +83,28 @@ class Agilent53131ACounter:
     def idn(self) -> str:
         return self._inst.query("*IDN?").strip()
 
+    def recall(self, register: int) -> None:
+        """Carrega o estado salvo no registro indicado do instrumento
+        (equivalente a apertar Save/Recall > Recall N no painel frontal)."""
+        self._inst.write(f"*RCL {register}")
+
     def read_totalize(self, gate_time_s: float) -> float:
         """Configura e mede a contagem total de pulsos durante gate_time_s
         segundos (mesma sequência do script validado em campo: CONFigure +
-        INIT + aguarda o gate + consulta o resultado)."""
+        INIT + aguarda o gate + consulta o resultado). Modo 'configuração
+        manual' — sobrescreve qualquer configuração carregada por Recall."""
         self._inst.write(f":CONFigure:TOTalize:TIMed {gate_time_s}")
         self._inst.write("INIT")
         time.sleep(gate_time_s + 0.2)
         value = self._inst.query(":MEASure:TOTalize:TIMed?")
+        return float(value)
+
+    def read_current(self, wait_s: float) -> float:
+        """Dispara uma nova medição usando a configuração ATUALMENTE ativa no
+        instrumento (a que veio de um Recall, ou a que já estava configurada
+        no painel), sem reconfigurar nada — só INIT + aguarda + FETCh?.
+        wait_s é quanto esperar antes de consultar o resultado."""
+        self._inst.write("INIT")
+        time.sleep(wait_s)
+        value = self._inst.query(":FETCh?")
         return float(value)
