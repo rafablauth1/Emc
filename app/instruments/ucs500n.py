@@ -31,7 +31,7 @@ class UCS500NDriver(InstrumentDriver):
         """Monta a string de comando, usando o valor salvo em Configurações >
         Comandos do UCS 500N se o operador já tiver descoberto/confirmado um, senão
         cai no placeholder padrão de app/instruments/ucs500n_commands.py."""
-        overrides = load_overrides()
+        overrides = load_overrides("ucs500n")
         template = overrides.get(name) or getattr(cmd, name)
         return template.format(**kwargs) if kwargs else template
 

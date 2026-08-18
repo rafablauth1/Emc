@@ -3,6 +3,8 @@ import random
 import time
 
 from app.config import SIMULATION_MODE
+from app.core.command_overrides import load_overrides
+from app.instruments import agilent_53131a_commands as cmd
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +97,21 @@ class Agilent53131ACounter:
                 pass
             self._inst = None
 
+    def _cmd(self, name: str, **kwargs) -> str:
+        """Monta a string de comando, usando o valor salvo na aba Comandos se
+        o operador já tiver descoberto/confirmado um, senão cai no padrão de
+        app/instruments/agilent_53131a_commands.py."""
+        overrides = load_overrides("agilent_53131a")
+        template = overrides.get(name) or getattr(cmd, name)
+        return template.format(**kwargs) if kwargs else template
+
     def idn(self) -> str:
-        return self._inst.query("*IDN?").strip()
+        return self._inst.query(self._cmd("IDN_QUERY")).strip()
 
     def recall(self, register: int) -> None:
         """Carrega o estado salvo no registro indicado do instrumento
         (equivalente a apertar Save/Recall > Recall N no painel frontal)."""
-        self._inst.write(f"*RCL {register}")
+        self._inst.write(self._cmd("RECALL", register=register))
 
     def read_totalize(self, gate_time_s: float) -> float:
         """Configura e mede a contagem total de pulsos durante gate_time_s
@@ -113,10 +123,10 @@ class Agilent53131ACounter:
         faz seu próprio INIT por dentro (é um comando "configura+dispara+lê"
         combinado) — encadeado depois de um INIT manual, o instrumento recusa
         o segundo INIT com o erro SCPI -213 "Init ignored"."""
-        self._inst.write(f":CONFigure:TOTalize:TIMed {gate_time_s}")
-        self._inst.write("INIT")
+        self._inst.write(self._cmd("CONFIGURE_TOTALIZE_TIMED", gate_time_s=gate_time_s))
+        self._inst.write(self._cmd("INIT"))
         time.sleep(gate_time_s + 0.2)
-        value = self._inst.query(":FETCh?")
+        value = self._inst.query(self._cmd("FETCH"))
         return float(value)
 
     def read_current_blocking(self, timeout_ms: int = 65000) -> float:
@@ -131,12 +141,12 @@ class Agilent53131ACounter:
         de novo rápido) deixa o barramento fora de sincronia e o instrumento
         recusa com o erro SCPI -420 'Query UNTERMINATED'."""
         if self.simulate:
-            return float(self._inst.query(":FETCh?"))
+            return float(self._inst.query(self._cmd("FETCH")))
 
         original_timeout = self._inst.timeout
         self._inst.timeout = timeout_ms
         try:
-            value = self._inst.query(":FETCh?")
+            value = self._inst.query(self._cmd("FETCH"))
             return float(value)
         finally:
             self._inst.timeout = original_timeout

@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QMainWindow, QScrollArea, QTabWidget, QWidget
 
+from app.gui.commands_view import CommandsView
 from app.gui.energy_registry_view import EnergyRegistryView
 from app.gui.execution_view import ExecutionView
 from app.gui.planner_view import PlannerView
@@ -18,6 +19,7 @@ class MainWindow(QMainWindow):
         self.energy_registry_view = EnergyRegistryView()
         self.reports_view = ReportsView()
         self.settings_view = SettingsView()
+        self.commands_view = CommandsView()
 
         self.planner_view.run_test_requested.connect(self._go_to_execution)
 
@@ -33,6 +35,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._scrollable(self.energy_registry_view), "Registro de Energia")
         tabs.addTab(self._scrollable(self.reports_view), "Relatórios")
         tabs.addTab(self._scrollable(self.settings_view), "Configurações")
+        tabs.addTab(self._scrollable(self.commands_view), "Comandos")
         tabs.currentChanged.connect(self._on_tab_changed)
         self.tabs = tabs
         self.setCentralWidget(tabs)

@@ -1,25 +1,37 @@
-"""Permite sobrescrever, sem precisar mexer em código nem gerar um .exe novo, os
-comandos GPIB do UCS 500N — já que o dicionário de comandos real do fabricante
-não é público. O operador descobre os comandos certos testando no Terminal GPIB
-(Configurações) e salva aqui; o driver passa a usar esses valores de verdade."""
+"""Permite sobrescrever, sem precisar mexer em código nem gerar um .exe novo,
+os comandos GPIB/SCPI de cada equipamento — usado principalmente pro UCS 500N
+(cujo dicionário de comandos real do fabricante não é público), mas disponível
+pra qualquer instrumento, caso surja alguma variação real de modelo/firmware.
+O operador descobre/confirma os comandos certos testando no Terminal GPIB
+(aba Comandos) e salva ali; os drivers passam a usar esses valores."""
 
 import json
 
 from app.config import DATA_DIR
 
-OVERRIDES_PATH = DATA_DIR / "ucs500n_commands_override.json"
+_FILENAMES = {
+    "ucs500n": "ucs500n_commands_override.json",
+    "chroma": "chroma_commands_override.json",
+    "agilent_53131a": "agilent_53131a_commands_override.json",
+}
 
 
-def load_overrides() -> dict:
-    if not OVERRIDES_PATH.exists():
+def _path_for(instrument: str):
+    filename = _FILENAMES.get(instrument, f"{instrument}_commands_override.json")
+    return DATA_DIR / filename
+
+
+def load_overrides(instrument: str) -> dict:
+    path = _path_for(instrument)
+    if not path.exists():
         return {}
     try:
-        with open(OVERRIDES_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
 
 
-def save_overrides(overrides: dict) -> None:
-    with open(OVERRIDES_PATH, "w", encoding="utf-8") as f:
+def save_overrides(instrument: str, overrides: dict) -> None:
+    with open(_path_for(instrument), "w", encoding="utf-8") as f:
         json.dump(overrides, f, indent=2, ensure_ascii=False)

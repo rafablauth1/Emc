@@ -1,6 +1,7 @@
 import time
 from typing import Callable, Optional
 
+from app.core.command_overrides import load_overrides
 from app.instruments import chroma_commands as cmd
 from app.instruments.base import InstrumentDriver, TestResult
 
@@ -17,9 +18,17 @@ class Chroma615xxDriver(InstrumentDriver):
     interrupção é programado como um pulso único de tensão reduzida.
     """
 
+    def _cmd(self, name: str, **kwargs) -> str:
+        """Monta a string de comando, usando o valor salvo na aba Comandos se
+        o operador tiver sobrescrito algum, senão cai no padrão (confirmado
+        no manual oficial) de app/instruments/chroma_commands.py."""
+        overrides = load_overrides("chroma")
+        template = overrides.get(name) or getattr(cmd, name)
+        return template.format(**kwargs) if kwargs else template
+
     def connect(self) -> None:
         super().connect()
-        self._transport.write(cmd.CLEAR_STATUS)
+        self._transport.write(self._cmd("CLEAR_STATUS"))
 
     def run_test(
         self,
@@ -41,11 +50,11 @@ class Chroma615xxDriver(InstrumentDriver):
         # opcionais por evento: count (repetições, padrão 1), phase_angles (padrão = default_phase_angles),
         # interval_ms (tempo entre repetições do mesmo evento, padrão 0)
 
-        self._transport.write(cmd.OUTPUT_STATE.format(state="OFF"))
-        self._transport.write(cmd.VOLTAGE_RANGE.format(range=voltage_range))
-        self._transport.write(cmd.SET_VOLTAGE_AC.format(voltage=nominal_voltage))
-        self._transport.write(cmd.SET_FREQUENCY.format(frequency_hz=frequency_hz))
-        self._transport.write(cmd.OUTPUT_STATE.format(state="ON"))
+        self._transport.write(self._cmd("OUTPUT_STATE", state="OFF"))
+        self._transport.write(self._cmd("VOLTAGE_RANGE", range=voltage_range))
+        self._transport.write(self._cmd("SET_VOLTAGE_AC", voltage=nominal_voltage))
+        self._transport.write(self._cmd("SET_FREQUENCY", frequency_hz=frequency_hz))
+        self._transport.write(self._cmd("OUTPUT_STATE", state="ON"))
         self._emit(on_progress, f"Chroma pronto — Un={nominal_voltage}V, {frequency_hz}Hz")
 
         applied = 0
@@ -63,23 +72,23 @@ class Chroma615xxDriver(InstrumentDriver):
             for angle in phase_angles:
                 for rep in range(count):
                     if should_stop and should_stop():
-                        self._transport.write(cmd.TRIGGER_STATE.format(state="OFF"))
-                        self._transport.write(cmd.OUTPUT_STATE.format(state="OFF"))
+                        self._transport.write(self._cmd("TRIGGER_STATE", state="OFF"))
+                        self._transport.write(self._cmd("OUTPUT_STATE", state="OFF"))
                         self._emit(on_progress, "Ensaio interrompido pelo operador")
                         return TestResult(passed=False, applied_events=applied)
 
-                    self._transport.write(cmd.SET_PULSE_VOLTAGE_AC.format(voltage=dip_voltage))
-                    self._transport.write(cmd.SET_PULSE_PERIOD_MS.format(period_ms=period_ms))
-                    self._transport.write(cmd.SET_PULSE_DUTY_PCT.format(duty_pct=duty_pct))
-                    self._transport.write(cmd.SET_PULSE_START_PHASE.format(phase_deg=angle))
-                    self._transport.write(cmd.SET_PULSE_COUNT.format(count=1))
-                    self._transport.write(cmd.OUTPUT_MODE.format(mode="PULSE"))
-                    self._transport.write(cmd.TRIGGER_STATE.format(state="ON"))
+                    self._transport.write(self._cmd("SET_PULSE_VOLTAGE_AC", voltage=dip_voltage))
+                    self._transport.write(self._cmd("SET_PULSE_PERIOD_MS", period_ms=period_ms))
+                    self._transport.write(self._cmd("SET_PULSE_DUTY_PCT", duty_pct=duty_pct))
+                    self._transport.write(self._cmd("SET_PULSE_START_PHASE", phase_deg=angle))
+                    self._transport.write(self._cmd("SET_PULSE_COUNT", count=1))
+                    self._transport.write(self._cmd("OUTPUT_MODE", mode="PULSE"))
+                    self._transport.write(self._cmd("TRIGGER_STATE", state="ON"))
 
                     self._wait_pulse_complete()
 
-                    self._transport.write(cmd.TRIGGER_STATE.format(state="OFF"))
-                    self._transport.write(cmd.OUTPUT_MODE.format(mode="FIXED"))
+                    self._transport.write(self._cmd("TRIGGER_STATE", state="OFF"))
+                    self._transport.write(self._cmd("OUTPUT_MODE", mode="FIXED"))
 
                     applied += 1
                     self._emit(
@@ -89,13 +98,13 @@ class Chroma615xxDriver(InstrumentDriver):
                     if interval_ms and rep < count - 1:
                         time.sleep(interval_ms / 1000)
 
-        self._transport.write(cmd.OUTPUT_STATE.format(state="OFF"))
+        self._transport.write(self._cmd("OUTPUT_STATE", state="OFF"))
         return TestResult(passed=True, applied_events=applied)
 
     def _wait_pulse_complete(self) -> None:
         elapsed = 0.0
         while elapsed < POLL_TIMEOUT_S:
-            state = self._transport.query(cmd.TRIGGER_STATE_QUERY).strip().upper()
+            state = self._transport.query(self._cmd("TRIGGER_STATE_QUERY")).strip().upper()
             if state != "RUNNING":
                 return
             time.sleep(POLL_INTERVAL_S)
