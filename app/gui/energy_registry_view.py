@@ -133,6 +133,11 @@ class EnergyRegistryView(QWidget):
         self.table.setHorizontalHeaderLabels(COLUMN_LABELS)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.cellChanged.connect(self._on_cell_changed)
+        # Sem altura mínima, a tabela ficava espremida — o "stretch" sozinho não
+        # garante espaço quando várias caixas acima dela (Gerar/Filtrar leituras)
+        # já ocupam bastante altura. Garante que sempre dá pra ver várias linhas
+        # de leitura de uma vez, mesmo com pouco espaço sobrando.
+        self.table.setMinimumHeight(320)
         layout.addWidget(self.table, 1)
         self._table_layout = layout
         self._table_index = layout.indexOf(self.table)

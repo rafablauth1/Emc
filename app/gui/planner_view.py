@@ -356,6 +356,7 @@ class PlannerView(QWidget):
             2, QHeaderView.ResizeMode.Stretch
         )
         self.checklist_table.setAlternatingRowColors(True)
+        self.checklist_table.setMinimumHeight(220)
         checklist_layout.addWidget(self.checklist_table)
         layout.addWidget(checklist_box, 1)
 
@@ -373,6 +374,7 @@ class PlannerView(QWidget):
         )
         self.schedule_table.setAlternatingRowColors(True)
         self.schedule_table.verticalHeader().setDefaultSectionSize(32)
+        self.schedule_table.setMinimumHeight(280)
         schedule_layout.addWidget(self.schedule_table)
         layout.addWidget(schedule_box, 3)
 
