@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -30,16 +31,18 @@ from app.core.planner import COMM_LINE_ELIGIBLE_STANDARDS, ORIGEM_DISPLAY, ORIGE
 
 
 class _FileSearchWorker(QThread):
-    """Vasculha o PC inteiro (em background, pra não travar a tela) por
-    arquivos .txt gerados por outro software com o padrão de nome
-    '{protocolo}_...'."""
+    """Vasculha em background (pra não travar a tela) por arquivos .txt
+    gerados por outro software com o padrão de nome '{protocolo}_...'.
+    root_dirs: pasta(s) específica(s) onde procurar; None procura no PC
+    todo (todas as unidades de disco)."""
 
     progress = Signal(str)
     finished_search = Signal(list)
 
-    def __init__(self, protocolo: str, parent=None):
+    def __init__(self, protocolo: str, root_dirs: list[Path] | None = None, parent=None):
         super().__init__(parent)
         self.protocolo = protocolo
+        self.root_dirs = root_dirs
         self._stop = False
 
     def stop(self) -> None:
@@ -48,6 +51,7 @@ class _FileSearchWorker(QThread):
     def run(self) -> None:
         results = project_files.find_matching_files(
             self.protocolo,
+            root_dirs=self.root_dirs,
             stop_flag=lambda: self._stop,
             on_progress=lambda path: self.progress.emit(path),
         )
@@ -330,6 +334,9 @@ class PlannerView(QWidget):
         import_files_btn = QPushButton("Importar arquivos (buscar no PC)")
         import_files_btn.clicked.connect(self._import_files)
         files_btn_row.addWidget(import_files_btn)
+        import_folder_btn = QPushButton("Importar de uma pasta...")
+        import_folder_btn.clicked.connect(self._import_files_from_folder)
+        files_btn_row.addWidget(import_folder_btn)
         files_btn_row.addStretch(1)
         files_layout.addLayout(files_btn_row)
         self.files_table = QTableWidget(0, 1)
@@ -593,10 +600,10 @@ class PlannerView(QWidget):
         folder = project_files.get_project_folder(self.current_project_id)
         os.startfile(str(folder))
 
-    def _import_files(self) -> None:
+    def _current_protocolo(self) -> str | None:
         if self.current_project_id is None:
             QMessageBox.warning(self, "Importar arquivos", "Selecione um projeto primeiro.")
-            return
+            return None
         project = planner.get_project(self.current_project_id)
         protocolo = (project.get("protocolo") or "").strip() if project else ""
         if not protocolo:
@@ -606,15 +613,34 @@ class PlannerView(QWidget):
                 "Preencha o campo \"Protocolo\" no Cadastro deste projeto antes de importar — "
                 "é ele que identifica quais arquivos (ex.: PROTOCOLO_4-19_120V.txt) pertencem a este projeto.",
             )
-            return
+            return None
+        return protocolo
 
-        progress = QProgressDialog("Buscando arquivos no PC...", "Cancelar", 0, 0, self)
+    def _import_files(self) -> None:
+        protocolo = self._current_protocolo()
+        if protocolo is None:
+            return
+        self._run_file_search(protocolo, root_dirs=None, label="Buscando arquivos no PC...")
+
+    def _import_files_from_folder(self) -> None:
+        protocolo = self._current_protocolo()
+        if protocolo is None:
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Escolher pasta pra buscar arquivos")
+        if not folder:
+            return
+        self._run_file_search(
+            protocolo, root_dirs=[Path(folder)], label=f"Buscando arquivos em {folder}..."
+        )
+
+    def _run_file_search(self, protocolo: str, root_dirs: list[Path] | None, label: str) -> None:
+        progress = QProgressDialog(label, "Cancelar", 0, 0, self)
         progress.setWindowTitle("Importar arquivos")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
 
-        worker = _FileSearchWorker(protocolo, self)
+        worker = _FileSearchWorker(protocolo, root_dirs=root_dirs, parent=self)
         worker.progress.connect(lambda path: progress.setLabelText(f"Buscando...\n{path}"))
 
         def on_finished(results: list) -> None:

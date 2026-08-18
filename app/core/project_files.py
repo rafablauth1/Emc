@@ -52,17 +52,21 @@ def _available_drives() -> list[Path]:
 
 def find_matching_files(
     protocolo: str,
+    root_dirs: Optional[list[Path]] = None,
     stop_flag: Optional[Callable[[], bool]] = None,
     on_progress: Optional[Callable[[str], None]] = None,
 ) -> list[Path]:
-    """Vasculha todas as unidades de disco disponíveis por arquivos .txt cujo
-    nome começa com '{protocolo}_' — é assim que o outro software nomeia os
-    arquivos gerados (ex.: 26070472_4-19_120V.txt)."""
+    """Vasculha por arquivos .txt cujo nome começa com '{protocolo}_' — é
+    assim que o outro software nomeia os arquivos gerados (ex.:
+    26070472_4-19_120V.txt). root_dirs: pastas onde procurar; se None,
+    procura em todas as unidades de disco disponíveis ("buscar no PC
+    todo")."""
     prefix = f"{protocolo}_"
     matches: list[Path] = []
     project_files_root = _root_dir()
-    for drive in _available_drives():
-        for dirpath, dirnames, filenames in os.walk(drive, topdown=True, onerror=lambda e: None):
+    roots = root_dirs if root_dirs is not None else _available_drives()
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=lambda e: None):
             if stop_flag is not None and stop_flag():
                 return matches
             current = Path(dirpath)
