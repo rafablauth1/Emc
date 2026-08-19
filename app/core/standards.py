@@ -17,7 +17,6 @@ class SurgeLevel:
 class DipsLevel:
     level: int
     percent_un: int
-    duration_ms: float
     cycles: float
 
 
@@ -65,12 +64,17 @@ SURGE_METER_PHASE_COMBINATIONS = (
     "L1-L2", "L1-L3", "L2-L3",
 )
 
+
+# Duração em ciclos — é assim que a IEC 61000-4-11 define os níveis (não em ms):
+# o número de ciclos é o mesmo em qualquer rede, mas a duração real em ms depende da
+# frequência do ensaio (60Hz no Brasil), por isso a conversão pra ms é feita em tempo de
+# execução (ver Chroma615xxDriver.run_test), a partir da frequência escolhida no roteiro.
 DIPS_LEVELS = [
-    DipsLevel(1, 0, 10.0, 0.5),
-    DipsLevel(2, 0, 20.0, 1),
-    DipsLevel(3, 40, 200.0, 10),
-    DipsLevel(4, 70, 500.0, 25),
-    DipsLevel(5, 80, 5000.0, 250),
+    DipsLevel(1, 0, 0.5),
+    DipsLevel(2, 0, 1),
+    DipsLevel(3, 40, 12),
+    DipsLevel(4, 70, 30),
+    DipsLevel(5, 80, 300),
 ]
-DIPS_SHORT_INTERRUPTION_MS = 5000.0
+DIPS_SHORT_INTERRUPTION_CYCLES = 300
 DIPS_PHASE_ANGLES_DEG = (0, 90, 180, 270)

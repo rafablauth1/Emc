@@ -3,6 +3,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -37,7 +38,7 @@ from app.core.standards import (
     BURST_SPIKE_FREQUENCIES_HZ,
     DIPS_LEVELS,
     DIPS_PHASE_ANGLES_DEG,
-    DIPS_SHORT_INTERRUPTION_MS,
+    DIPS_SHORT_INTERRUPTION_CYCLES,
     SURGE_COUPLINGS,
     SURGE_DEFAULT_INTERVAL_S,
     SURGE_DEFAULT_PULSE_COUNT,
@@ -156,6 +157,7 @@ class ExecutionView(QWidget):
         layout.addWidget(QLabel("Log do ensaio:"))
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.setMinimumHeight(260)
         layout.addWidget(self.log_view, 1)
 
         layout.addWidget(self._build_counter_box())
@@ -494,28 +496,32 @@ class ExecutionView(QWidget):
         layout.addWidget(
             QLabel(
                 "Roteiro de eventos (dips/interrupções) — editável, na ordem de execução.\n"
-                "Ângulos em branco usam os ângulos marcados acima; para vários ângulos separe por vírgula (ex: 0,180)."
+                "Repetições e Intervalo são desse evento (volta à tensão nominal entre uma\n"
+                "repetição e outra, por esse tanto de ciclos). Ângulos em branco usam os\n"
+                "ângulos marcados acima; ângulo 0/padrão aplica direto (VOLT); qualquer\n"
+                "outro ângulo dispara sincronizado via modo LIST do equipamento."
             )
         )
         self.dips_events_table = QTableWidget(0, 5)
         self.dips_events_table.setHorizontalHeaderLabels(
-            ["% Un (0 = interrupção)", "Duração (ms)", "Repetições", "Ângulos (°)", "Intervalo entre repetições (ms)"]
+            ["% Un (0 = interrupção)", "Ciclos", "Repetições", "Intervalo (ciclos)", "Ângulos (°)"]
         )
         self.dips_events_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
+        self.dips_events_table.setMinimumHeight(260)
         layout.addWidget(self.dips_events_table)
 
         preset_row = QHBoxLayout()
         self.dips_preset_combo = QComboBox()
         for level in DIPS_LEVELS:
             self.dips_preset_combo.addItem(
-                f"Nível {level.level} — {level.percent_un}% Un, {level.duration_ms:.0f} ms",
-                (level.percent_un, level.duration_ms),
+                f"Nível {level.level} — {level.percent_un}% Un, {level.cycles:g} ciclo(s)",
+                (level.percent_un, level.cycles),
             )
         self.dips_preset_combo.addItem(
-            f"Interrupção curta — {DIPS_SHORT_INTERRUPTION_MS:.0f} ms",
-            (0, DIPS_SHORT_INTERRUPTION_MS),
+            f"Interrupção curta — {DIPS_SHORT_INTERRUPTION_CYCLES:g} ciclo(s)",
+            (0, DIPS_SHORT_INTERRUPTION_CYCLES),
         )
         add_preset_btn = QPushButton("Adicionar nível padrão ao roteiro")
         add_preset_btn.clicked.connect(self._add_dips_preset_event)
@@ -542,31 +548,38 @@ class ExecutionView(QWidget):
         self._add_template_controls(template_form, "4-11")
         layout.addLayout(template_form)
 
+        self.dips_counter_sync_checkbox = QCheckBox(
+            "Sincronizar com o contador (relógio) — lê o pulso do medidor antes de "
+            "iniciar e o próximo pulso assim que o ensaio terminar, e registra o "
+            "tempo do ensaio medido por esse intervalo"
+        )
+        layout.addWidget(self.dips_counter_sync_checkbox)
+
         self._add_dips_preset_event()
         return page
 
     def _add_dips_preset_event(self) -> None:
-        percent_un, duration_ms = self.dips_preset_combo.currentData()
-        self._append_dips_row(percent_un, duration_ms)
+        percent_un, cycles = self.dips_preset_combo.currentData()
+        self._append_dips_row(percent_un, cycles)
 
     def _add_dips_blank_event(self) -> None:
-        self._append_dips_row(40, 200.0)
+        self._append_dips_row(40, 12)
 
     def _append_dips_row(
         self,
         percent_un: float,
-        duration_ms: float,
+        cycles: float,
         count: int = 1,
+        interval_cycles: float = 0,
         phase_angles: str = "",
-        interval_ms: str = "",
     ) -> None:
         row = self.dips_events_table.rowCount()
         self.dips_events_table.insertRow(row)
         self.dips_events_table.setItem(row, 0, QTableWidgetItem(str(percent_un)))
-        self.dips_events_table.setItem(row, 1, QTableWidgetItem(str(duration_ms)))
+        self.dips_events_table.setItem(row, 1, QTableWidgetItem(str(cycles)))
         self.dips_events_table.setItem(row, 2, QTableWidgetItem(str(count)))
-        self.dips_events_table.setItem(row, 3, QTableWidgetItem(phase_angles))
-        self.dips_events_table.setItem(row, 4, QTableWidgetItem(interval_ms))
+        self.dips_events_table.setItem(row, 3, QTableWidgetItem(str(interval_cycles) if interval_cycles else ""))
+        self.dips_events_table.setItem(row, 4, QTableWidgetItem(phase_angles))
 
     def _on_standard_changed(self, index: int) -> None:
         self.params_stack.setCurrentIndex(index)
@@ -633,26 +646,26 @@ class ExecutionView(QWidget):
             events = []
             for row in range(self.dips_events_table.rowCount()):
                 percent_item = self.dips_events_table.item(row, 0)
-                duration_item = self.dips_events_table.item(row, 1)
+                cycles_item = self.dips_events_table.item(row, 1)
                 count_item = self.dips_events_table.item(row, 2)
-                angles_item = self.dips_events_table.item(row, 3)
-                interval_item = self.dips_events_table.item(row, 4)
-                if percent_item is None or duration_item is None:
+                interval_item = self.dips_events_table.item(row, 3)
+                angles_item = self.dips_events_table.item(row, 4)
+                if percent_item is None or cycles_item is None:
                     continue
                 percent_un = float(percent_item.text())
-                duration_ms = float(duration_item.text())
+                cycles = float(cycles_item.text())
                 if percent_un <= 0:
-                    event = {"interruption": True, "duration_ms": duration_ms}
+                    event = {"interruption": True, "cycles": cycles}
                 else:
-                    event = {"percent_un": percent_un, "duration_ms": duration_ms}
+                    event = {"percent_un": percent_un, "cycles": cycles}
                 count_text = count_item.text().strip() if count_item else ""
                 event["count"] = int(count_text) if count_text else 1
+                interval_text = interval_item.text().strip() if interval_item else ""
+                if interval_text:
+                    event["interval_cycles"] = float(interval_text)
                 angles_text = angles_item.text().strip() if angles_item else ""
                 if angles_text:
                     event["phase_angles"] = [int(a.strip()) for a in angles_text.split(",") if a.strip()]
-                interval_text = interval_item.text().strip() if interval_item else ""
-                if interval_text:
-                    event["interval_ms"] = float(interval_text)
                 events.append(event)
             if not events:
                 raise ValueError("Adicione ao menos um evento ao roteiro de dips antes de continuar.")
@@ -695,9 +708,9 @@ class ExecutionView(QWidget):
             for event in params["events"]:
                 percent_un = 0 if event.get("interruption") else event["percent_un"]
                 count = event.get("count", 1)
+                interval_cycles = event.get("interval_cycles", 0)
                 angles = ",".join(str(a) for a in event["phase_angles"]) if event.get("phase_angles") else ""
-                interval = str(event["interval_ms"]) if event.get("interval_ms") else ""
-                self._append_dips_row(percent_un, event["duration_ms"], count, angles, interval)
+                self._append_dips_row(percent_un, event["cycles"], count, interval_cycles, angles)
 
     # ---- execução ----
 
@@ -718,6 +731,12 @@ class ExecutionView(QWidget):
 
         self._disconnect_manual_driver()
 
+        counter = None
+        counter_recall_register = None
+        if standard_code == "4-11" and self.dips_counter_sync_checkbox.isChecked():
+            counter = build_agilent_counter_driver()
+            counter_recall_register = self.counter_recall_spin.value()
+
         driver = build_driver_for_standard(standard_code)
         self.worker = TestSessionWorker(
             driver=driver,
@@ -728,6 +747,8 @@ class ExecutionView(QWidget):
             operator=self.operator_edit.text().strip(),
             level_label=level_label,
             params=params,
+            counter=counter,
+            counter_recall_register=counter_recall_register,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.paused.connect(self._on_paused)
@@ -795,7 +816,8 @@ class ExecutionView(QWidget):
             self.worker.request_stop()
 
     def _on_progress(self, message: str) -> None:
-        self.log_view.appendPlainText(message)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_view.appendPlainText(f"[{timestamp}] {message}")
 
     def _on_paused(self, message: str) -> None:
         self.log_view.appendPlainText(f"*** PAUSA: {message} ***")

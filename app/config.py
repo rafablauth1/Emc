@@ -19,7 +19,7 @@ SIMULATION_MODE = True
 
 DEFAULT_GPIB_ADDRESSES = {
     "ucs500n": 6,
-    "chroma": 1,
+    "chroma": 30,
     "agilent_53131a": 1,
 }
 
@@ -31,15 +31,17 @@ DEFAULT_GPIB_BOARDS = {
     "agilent_53131a": 0,
 }
 
+# número da porta ASRL (ex.: 3 → COM3, formato ASRL3::INSTR do VISA),
+# confirmado no script validado em campo (Timer_RTC.py) pro contador.
 DEFAULT_SERIAL_PORTS = {
-    "ucs500n": "COM3",
-    "chroma": "COM4",
-    # número da porta ASRL (ex.: 3 → COM3, formato ASRL3::INSTR do VISA),
-    # confirmado no script validado em campo (Timer_RTC.py).
+    "ucs500n": 3,
+    "chroma": 4,
     "agilent_53131a": 3,
 }
 
-# Conexão padrão do contador Agilent 53131A: "gpib" ou "serial" (RS-232).
+# Conexão padrão de cada instrumento: "gpib" ou "serial" (RS-232).
+DEFAULT_UCS500N_CONNECTION = "gpib"
+DEFAULT_CHROMA_CONNECTION = "gpib"
 DEFAULT_COUNTER_CONNECTION = "gpib"
 
 STANDARDS = {

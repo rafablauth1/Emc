@@ -6,12 +6,20 @@ from typing import Optional
 from PySide6.QtCore import QThread, Signal
 
 from app.core.db import db_cursor
+from app.instruments.agilent_53131a import Agilent53131ACounter
 from app.instruments.base import InstrumentDriver
 
 
 class TestSessionWorker(QThread):
     """Roda um ensaio contra um driver de instrumento em thread separada,
-    gravando progresso e resultado no banco a cada etapa."""
+    gravando progresso e resultado no banco a cada etapa.
+
+    Opcionalmente, sincroniza com o contador de frequência (ligado no pulso
+    de saída do medidor sob ensaio — "o relógio"): lê o pulso ATUAL antes de
+    iniciar o driver do ensaio, roda o ensaio inteiro, e lê o próximo pulso
+    novo assim que o ensaio termina. A diferença de tempo entre esses dois
+    pulsos (marcações reais do próprio medidor, não só o cronômetro do PC)
+    vira o "tempo do ensaio" registrado na sessão."""
 
     progress = Signal(str)
     paused = Signal(str)  # mensagem para o operador (ex.: trocar setup para próximo elemento)
@@ -27,6 +35,8 @@ class TestSessionWorker(QThread):
         operator: str,
         level_label: str,
         params: dict,
+        counter: Optional[Agilent53131ACounter] = None,
+        counter_recall_register: Optional[int] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -38,6 +48,8 @@ class TestSessionWorker(QThread):
         self.operator = operator
         self.level_label = level_label
         self.params = params
+        self.counter = counter
+        self.counter_recall_register = counter_recall_register
         self._stop_requested = False
         self._pause_requested = False
         self.session_id: Optional[int] = None
@@ -80,6 +92,22 @@ class TestSessionWorker(QThread):
             self._log_event(session_id, message)
             self.progress.emit(message)
 
+        counter_note = ""
+        before_value: Optional[float] = None
+        before_ts: Optional[str] = None
+        if self.counter is not None:
+            try:
+                self.counter.connect()
+                if self.counter_recall_register is not None:
+                    self.counter.recall(self.counter_recall_register)
+                before_value = self.counter.read_current_blocking()
+                before_ts = datetime.now(timezone.utc).isoformat()
+                on_progress(f"Contador (relógio) — pulso ANTES do ensaio: {before_value:g}")
+            except Exception as exc:
+                on_progress(f"Contador (relógio): erro ao ler o pulso inicial — {exc}")
+                before_value = None
+                before_ts = None
+
         result = None
         try:
             self.driver.connect()
@@ -94,6 +122,30 @@ class TestSessionWorker(QThread):
             except Exception:
                 pass
 
+        if self.counter is not None and before_value is not None:
+            try:
+                after_value = self.counter.read_current_blocking()
+                after_ts = datetime.now(timezone.utc).isoformat()
+                elapsed_s = (
+                    datetime.fromisoformat(after_ts) - datetime.fromisoformat(before_ts)
+                ).total_seconds()
+                pulses = after_value - before_value
+                on_progress(
+                    f"Contador (relógio) — pulso DEPOIS do ensaio: {after_value:g} "
+                    f"(Δ={pulses:g} pulso(s), tempo do ensaio pelo contador: {elapsed_s:.3f}s)"
+                )
+                counter_note = (
+                    f"Contador (relógio): {pulses:g} pulso(s) entre antes/depois do ensaio, "
+                    f"tempo medido = {elapsed_s:.3f}s (pulso antes={before_value:g}, depois={after_value:g})."
+                )
+            except Exception as exc:
+                on_progress(f"Contador (relógio): erro ao ler o pulso final — {exc}")
+            finally:
+                try:
+                    self.counter.disconnect()
+                except Exception:
+                    pass
+
         finished_at = datetime.now(timezone.utc).isoformat()
         if result is None:
             outcome_note = "Ensaio abortado por erro de comunicação com o instrumento."
@@ -101,7 +153,8 @@ class TestSessionWorker(QThread):
             outcome_note = "Ensaio interrompido pelo operador."
         else:
             outcome_note = ""
-        self._finish_session(session_id, finished_at, outcome_note)
+        notes = " ".join(n for n in (outcome_note, counter_note) if n)
+        self._finish_session(session_id, finished_at, notes)
         self.finished_session.emit(session_id)
 
     def _create_session(self, started_at: str) -> int:

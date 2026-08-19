@@ -3,8 +3,6 @@ Chamado (de forma idempotente) toda vez que o banco é inicializado."""
 
 from app.core import templates
 
-_CYCLE_MS_60HZ = 1000 / 60
-
 NIT_SEGEL_044_NAME = "NIT-SEGEL-044 (medidores de energia elétrica)"
 
 
@@ -90,72 +88,22 @@ def _seed_surge() -> None:
 
 def _seed_dips() -> None:
     # NIT-SEGEL-044 Tabela 1 (item 9.6.3.2) — os 9 eventos oficiais para medidores de energia.
-    # Durações convertidas de ciclos para ms considerando rede de 60Hz (padrão Brasil).
-    # "Redução de tensão" da Tabela 1 é o quanto a tensão CAI; aqui convertido para percent_un,
-    # que é a tensão REMANESCENTE (100 - redução) — convenção usada no resto do app.
-    c = _CYCLE_MS_60HZ
+    # Duração em ciclos, como a norma define (não em ms — a app converte pra ms na hora de
+    # executar, a partir da frequência do ensaio, 60Hz aqui). "Redução de tensão" da Tabela 1
+    # é o quanto a tensão CAI; aqui convertido para percent_un, que é a tensão REMANESCENTE
+    # (100 - redução) — convenção usada no resto do app. `interval_cycles` é a pausa em
+    # tensão nominal entre uma repetição e outra do mesmo evento (parte da LIST programada
+    # no equipamento, não um sleep em software).
     events = [
-        {
-            "interruption": True,
-            "duration_ms": round(6 * c, 1),
-            "count": 3,
-            "phase_angles": [0],
-            "interval_ms": round(3 * c, 1),
-        },
-        {
-            "interruption": True,
-            "duration_ms": round(60 * c, 1),
-            "count": 3,
-            "phase_angles": [0],
-            "interval_ms": round(3 * c, 1),
-        },
-        {
-            "interruption": True,
-            "duration_ms": round(1 * c, 1),
-            "count": 1,
-            "phase_angles": [0],
-        },
-        {
-            "percent_un": 5,
-            "duration_ms": round(300 * c, 1),
-            "count": 3,
-            "phase_angles": [0],
-            "interval_ms": round(600 * c, 1),
-        },
-        {
-            "percent_un": 40,
-            "duration_ms": round(6 * c, 1),
-            "count": 3,
-            "phase_angles": [0],
-            "interval_ms": round(600 * c, 1),
-        },
-        {
-            "percent_un": 40,
-            "duration_ms": round(60 * c, 1),
-            "count": 3,
-            "phase_angles": [0],
-            "interval_ms": round(600 * c, 1),
-        },
-        {
-            "percent_un": 70,
-            "duration_ms": round(0.5 * c, 1),
-            "count": 3,
-            "phase_angles": [0, 180],
-            "interval_ms": round(600 * c, 1),
-        },
-        {
-            "percent_un": 70,
-            "duration_ms": round(1 * c, 1),
-            "count": 3,
-            "phase_angles": [0],
-            "interval_ms": round(600 * c, 1),
-        },
-        {
-            "percent_un": 50,
-            "duration_ms": round(3600 * c, 1),
-            "count": 1,
-            "phase_angles": [0],
-        },
+        {"interruption": True, "cycles": 6, "count": 3, "interval_cycles": 3, "phase_angles": [0]},
+        {"interruption": True, "cycles": 60, "count": 3, "interval_cycles": 3, "phase_angles": [0]},
+        {"interruption": True, "cycles": 1, "count": 1, "phase_angles": [0]},
+        {"percent_un": 5, "cycles": 300, "count": 3, "interval_cycles": 600, "phase_angles": [0]},
+        {"percent_un": 40, "cycles": 6, "count": 3, "interval_cycles": 600, "phase_angles": [0]},
+        {"percent_un": 40, "cycles": 60, "count": 3, "interval_cycles": 600, "phase_angles": [0]},
+        {"percent_un": 70, "cycles": 0.5, "count": 3, "interval_cycles": 600, "phase_angles": [0, 180]},
+        {"percent_un": 70, "cycles": 1, "count": 3, "interval_cycles": 600, "phase_angles": [0]},
+        {"percent_un": 50, "cycles": 3600, "count": 1, "phase_angles": [0]},
     ]
     _seed_if_missing(
         "4-11",

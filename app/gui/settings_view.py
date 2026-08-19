@@ -51,6 +51,16 @@ class SettingsView(QWidget):
         )
 
         form = QFormLayout()
+
+        self.ucs_connection_combo = QComboBox()
+        self.ucs_connection_combo.addItem("GPIB", "gpib")
+        self.ucs_connection_combo.addItem("Serial (RS-232)", "serial")
+        index = self.ucs_connection_combo.findData(settings.ucs500n_connection)
+        if index >= 0:
+            self.ucs_connection_combo.setCurrentIndex(index)
+        self.ucs_connection_combo.currentIndexChanged.connect(self._on_ucs_connection_changed)
+        form.addRow("Conexão — EM TEST UCS 500N:", self.ucs_connection_combo)
+
         self.ucs_addr_spin = QSpinBox()
         self.ucs_addr_spin.setRange(1, 31)
         self.ucs_addr_spin.setValue(settings.gpib_addresses["ucs500n"])
@@ -58,6 +68,26 @@ class SettingsView(QWidget):
             lambda v: settings.gpib_addresses.__setitem__("ucs500n", v)
         )
         form.addRow("Endereço GPIB — EM TEST UCS 500N:", self.ucs_addr_spin)
+        self._ucs_addr_label = form.labelForField(self.ucs_addr_spin)
+
+        self.ucs_serial_spin = QSpinBox()
+        self.ucs_serial_spin.setRange(1, 99)
+        self.ucs_serial_spin.setPrefix("COM")
+        self.ucs_serial_spin.setValue(settings.serial_ports["ucs500n"])
+        self.ucs_serial_spin.valueChanged.connect(
+            lambda v: settings.serial_ports.__setitem__("ucs500n", v)
+        )
+        form.addRow("Porta serial — EM TEST UCS 500N:", self.ucs_serial_spin)
+        self._ucs_serial_label = form.labelForField(self.ucs_serial_spin)
+
+        self.chroma_connection_combo = QComboBox()
+        self.chroma_connection_combo.addItem("GPIB", "gpib")
+        self.chroma_connection_combo.addItem("Serial (RS-232)", "serial")
+        index = self.chroma_connection_combo.findData(settings.chroma_connection)
+        if index >= 0:
+            self.chroma_connection_combo.setCurrentIndex(index)
+        self.chroma_connection_combo.currentIndexChanged.connect(self._on_chroma_connection_changed)
+        form.addRow("Conexão — Chroma 61501/61504:", self.chroma_connection_combo)
 
         self.chroma_addr_spin = QSpinBox()
         self.chroma_addr_spin.setRange(1, 30)
@@ -66,6 +96,17 @@ class SettingsView(QWidget):
             lambda v: settings.gpib_addresses.__setitem__("chroma", v)
         )
         form.addRow("Endereço GPIB — Chroma 61501/61504:", self.chroma_addr_spin)
+        self._chroma_addr_label = form.labelForField(self.chroma_addr_spin)
+
+        self.chroma_serial_spin = QSpinBox()
+        self.chroma_serial_spin.setRange(1, 99)
+        self.chroma_serial_spin.setPrefix("COM")
+        self.chroma_serial_spin.setValue(settings.serial_ports["chroma"])
+        self.chroma_serial_spin.valueChanged.connect(
+            lambda v: settings.serial_ports.__setitem__("chroma", v)
+        )
+        form.addRow("Porta serial — Chroma 61501/61504:", self.chroma_serial_spin)
+        self._chroma_serial_label = form.labelForField(self.chroma_serial_spin)
 
         self.counter_connection_combo = QComboBox()
         self.counter_connection_combo.addItem("GPIB", "gpib")
@@ -105,13 +146,22 @@ class SettingsView(QWidget):
         self._counter_serial_label = form.labelForField(self.counter_serial_spin)
 
         layout.addLayout(form)
+        self._on_ucs_connection_changed(self.ucs_connection_combo.currentIndex())
+        self._on_chroma_connection_changed(self.chroma_connection_combo.currentIndex())
         self._on_counter_connection_changed(self.counter_connection_combo.currentIndex())
 
-        layout.addWidget(QLabel("Teste de comunicação GPIB (connect + *IDN?):"))
+        layout.addWidget(
+            QLabel(
+                "Teste de comunicação (connect + *IDN?) — sempre tenta o hardware real,\n"
+                "mesmo com o modo simulado marcado acima:"
+            )
+        )
 
         ucs_test_row = QHBoxLayout()
         ucs_test_btn = QPushButton("Testar comunicação — UCS 500N")
-        ucs_test_btn.clicked.connect(lambda: self._test_comm("ucs500n", build_ucs500n_driver))
+        ucs_test_btn.clicked.connect(
+            lambda: self._test_comm("ucs500n", lambda: build_ucs500n_driver(force_real=True))
+        )
         self.ucs_test_status = QLabel("")
         ucs_test_row.addWidget(ucs_test_btn)
         ucs_test_row.addWidget(self.ucs_test_status, 1)
@@ -119,7 +169,9 @@ class SettingsView(QWidget):
 
         chroma_test_row = QHBoxLayout()
         chroma_test_btn = QPushButton("Testar comunicação — Chroma")
-        chroma_test_btn.clicked.connect(lambda: self._test_comm("chroma", build_chroma_driver))
+        chroma_test_btn.clicked.connect(
+            lambda: self._test_comm("chroma", lambda: build_chroma_driver(force_real=True))
+        )
         self.chroma_test_status = QLabel("")
         chroma_test_row.addWidget(chroma_test_btn)
         chroma_test_row.addWidget(self.chroma_test_status, 1)
@@ -128,7 +180,9 @@ class SettingsView(QWidget):
         counter_test_row = QHBoxLayout()
         counter_test_btn = QPushButton("Testar comunicação — Contador Agilent 53131A")
         counter_test_btn.clicked.connect(
-            lambda: self._test_comm("agilent_53131a", build_agilent_counter_driver)
+            lambda: self._test_comm(
+                "agilent_53131a", lambda: build_agilent_counter_driver(force_real=True)
+            )
         )
         self.counter_test_status = QLabel("")
         counter_test_row.addWidget(counter_test_btn)
@@ -155,6 +209,24 @@ class SettingsView(QWidget):
 
     def _on_buzzer_toggled(self, checked: bool) -> None:
         settings.buzzer_enabled = checked
+
+    def _on_ucs_connection_changed(self, _index: int) -> None:
+        connection = self.ucs_connection_combo.currentData()
+        settings.ucs500n_connection = connection
+        is_serial = connection == "serial"
+        self.ucs_addr_spin.setVisible(not is_serial)
+        self._ucs_addr_label.setVisible(not is_serial)
+        self.ucs_serial_spin.setVisible(is_serial)
+        self._ucs_serial_label.setVisible(is_serial)
+
+    def _on_chroma_connection_changed(self, _index: int) -> None:
+        connection = self.chroma_connection_combo.currentData()
+        settings.chroma_connection = connection
+        is_serial = connection == "serial"
+        self.chroma_addr_spin.setVisible(not is_serial)
+        self._chroma_addr_label.setVisible(not is_serial)
+        self.chroma_serial_spin.setVisible(is_serial)
+        self._chroma_serial_label.setVisible(is_serial)
 
     def _on_counter_connection_changed(self, _index: int) -> None:
         connection = self.counter_connection_combo.currentData()

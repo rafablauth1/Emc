@@ -1,10 +1,13 @@
 """Comandos SCPI reais do Chroma 61501/61502/61503/61504 (Programmable AC Source),
-extraídos do manual de programação oficial (P/N A11 000568, versão 1.1, capítulo 8).
+usados no ensaio de Quedas de Tensão / Interrupções (IEC 61000-4-11).
 
-Usado para ensaios de Quedas de Tensão / Interrupções (IEC 61000-4-11) através do
-modo PULSE do equipamento: a tensão nominal fica em VOLTage:AC, e cada evento de
-dip/interrupção é programado como um pulso único (PULSe:*) com a tensão reduzida
-durante o duty cycle, disparado via TRIG.
+Testado em campo (Teste_IEC61000-4-11.py, Pedro Henrique De Ros/EMC, e testes
+diretos neste projeto): tanto o modo PULSE (PULSe:*/TRIG) quanto o modo LIST
+(LIST:*/TRIG) estão documentados no manual oficial (§8.6.2.7 e §8.6.2.8) mas,
+na prática, em DOIS testes reais separados, `OUTP:MODE {LIST|PULSE}` seguido
+de `TRIG ON` nunca fez o equipamento sair da tensão nominal nem mostrar
+RUNNING — só escrever VOLT direto e esperar em software realmente muda a
+saída. Por isso o driver usa só esse caminho simples.
 """
 
 IDN_QUERY = "*IDN?"
@@ -12,20 +15,9 @@ RESET = "*RST"
 CLEAR_STATUS = "*CLS"
 
 OUTPUT_STATE = "OUTP {state}"  # ON | OFF
-OUTPUT_RELAY = "OUTP:RELay {state}"  # ON | OFF
-OUTPUT_MODE = "OUTP:MODE {mode}"  # FIXED | PULSE
-VOLTAGE_RANGE = "VOLT:RANGe {range}"  # LOW | HIGH | AUTO
+VOLTAGE_RANGE = "VOLT:RANGe {range}"  # LOW | HIGH | AUTO — trava a faixa (AUTO troca relé 150V/300V sozinho)
 
 SET_VOLTAGE_AC = "VOLT:AC {voltage}"
 SET_FREQUENCY = "FREQ {frequency_hz}"
-
-SET_PULSE_VOLTAGE_AC = "PULS:VOLT:AC {voltage}"
-SET_PULSE_PERIOD_MS = "PULS:PERiod {period_ms}"
-SET_PULSE_DUTY_PCT = "PULS:DCYCle {duty_pct}"
-SET_PULSE_START_PHASE = "PULS:SPHase {phase_deg}"
-SET_PULSE_COUNT = "PULS:COUNt {count}"
-
-TRIGGER_STATE = "TRIG {state}"  # ON | OFF
-TRIGGER_STATE_QUERY = "TRIG:STATE?"
 
 ERROR_QUERY = "SYST:ERRor?"
